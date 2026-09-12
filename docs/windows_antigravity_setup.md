@@ -103,8 +103,11 @@ Antigravity のエージェントパネル → MCP サーバーの管理（Manag
 
 ## 手順 5: Jw_cad で確認（人が操作する部分。エージェントは手順を案内し、結果を聞き取る）
 
-A. **DXF を開く**: Jw_cad → ファイル → 開く → ファイルの種類「DXF」→ `<SHARE>\home\exports\win_test.dxf`。
-   確認: 図面枠が紙の下端にあるか、レイヤ名（通り芯・壁・室名・図面枠）が付いているか、「事務室」の文字が読めるか。
+A. **DXF を開く**: まず Jw_cad の 設定 → 基本設定 → 「DXF・SXF・JWC」タブ → **「図面範囲を読取る」に チェック** → OK。
+   次に ファイル → 開く → ファイルの種類「DXF」→ `<SHARE>\home\exports\win_test.dxf`。
+   期待: 用紙 A3・縮尺 1/50 で開き、図面枠が紙の下端にある。
+   確認: レイヤ名（通り芯・壁・室名・図面枠）が付いているか、「事務室」「Windows接続テスト」の文字が読めるか（文字化けなら報告）。
+   もし縮尺が極端（1/1000000 など）になる場合は、DXF が古い版（$EXTMAX 未設定）です。Antigravity で `drawing_export` を実行し直して新しい DXF を作る。
 
 B. **外部変形（送信）**: Jw_cad で何か図面を開き → 外部変形 → `<SHARE>\exchange\gaihen\JWMCP_send.bat` を選ぶ → 範囲選択 → 待機状態になる。
    その間に Antigravity で `gaihen_jobs` → ジョブが 1 件見えること → `gaihen_read` で図形が読めること →

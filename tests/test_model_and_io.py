@@ -44,11 +44,16 @@ def test_drawing_persist_and_export(tmp_path, monkeypatch):
     assert len(d2.entities) == 5 and d2.layer_names["0-1"] == "壁"
     assert d2.bbox()["width"] == 7280
 
-    dxf = write_dxf(d2.entities, str(tmp_path / "h.dxf"), scale_for=d2.scale_of, layer_names=d2.layer_names)
+    dxf = write_dxf(d2.entities, str(tmp_path / "h.dxf"), scale_for=d2.scale_of, layer_names=d2.layer_names,
+                    paper="A3", main_scale=100)
     assert dxf["entities"] >= 10 and "01_壁" in dxf["layers"]
     import ezdxf
     doc = ezdxf.readfile(str(tmp_path / "h.dxf"))
     assert len(list(doc.modelspace())) == dxf["entities"]
+    # Jw_cad derives paper/scale from the header extents: A3 at 1/100 = 42000 x 29700 real mm, Shift_JIS text
+    assert doc.header["$EXTMIN"] == (-21000.0, -14850.0, 0.0) and doc.header["$EXTMAX"] == (21000.0, 14850.0, 0.0)
+    assert doc.dxfversion == "AC1015" and doc.encoding == "cp932"
+    assert any(t.dxf.text == "リビング" for t in doc.modelspace().query("TEXT"))
 
     png = render(d2.entities, str(tmp_path / "h.png"), scale_for=d2.scale_of)
     assert Path(png["png"]).stat().st_size > 1000

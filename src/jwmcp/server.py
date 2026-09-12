@@ -420,7 +420,8 @@ def drawing_export(name: str, format: str = "dxf", out: str | None = None) -> di
     outdir = jwmcp_home() / "exports"; outdir.mkdir(exist_ok=True)
     if fmt == "dxf":
         out = out or str(outdir / f"{name}.dxf")
-        return {**write_dxf(d.unified_entities(), out, scale_for=d.scale_for_unified, layer_names=d.layer_names),
+        return {**write_dxf(d.unified_entities(), out, scale_for=d.scale_for_unified, layer_names=d.layer_names,
+                            paper=d.paper, main_scale=d.main_scale),
                 "model_space": f"real mm at 1/{d.main_scale:g}; other layer groups (e.g. the 1:1 frame) are rescaled to fit"}
     if fmt in ("jwc_temp", "jwc", "gaihen"):
         out = out or str(outdir / f"{name}_jwc_temp.txt")
