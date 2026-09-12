@@ -1,47 +1,58 @@
 @echo off
-REM jwmcp Windows setup (run once). Creates .venv, installs jwmcp, prepares the 外部変形 exchange folder,
-REM and registers the MCP server with Claude Code if the `claude` CLI is available.
+REM jwmcp Windows setup (run once, safe to re-run).
+REM  - virtualenv goes to %LOCALAPPDATA%\jwmcp\venv (never inside a synced folder such as Google Drive)
+REM  - if the repo lives in <share>\jwmcp, then <share>\home (profiles, drawings) and <share>\exchange
+REM    (外部変形 bridge) are used so Mac and Windows see the same data
+REM  - registers the MCP server with Claude Code when the `claude` CLI exists; prints the JSON for
+REM    Antigravity / Claude Desktop otherwise
 setlocal enabledelayedexpansion
 cd /d "%~dp0\..\.."
 set "ROOT=%CD%"
-echo === jwmcp setup in %ROOT%
+for %%I in ("%ROOT%\..") do set "SHARE=%%~fI"
+echo === jwmcp setup   repo: %ROOT%
 
 where py >nul 2>&1 && (set "PY=py -3") || (set "PY=python")
 %PY% --version >nul 2>&1 || (
-  echo Python 3.11 or newer is required. Install it from https://www.python.org/downloads/windows/ ^(check "Add python.exe to PATH"^) and run this again.
+  echo Python 3.11 or newer is required. Install from https://www.python.org/downloads/windows/
+  echo and tick "Add python.exe to PATH", then run this again.
   pause & exit /b 1
 )
-for /f "tokens=2 delims= " %%v in ('%PY% --version') do set "PYVER=%%v"
-echo Python %PYVER%
+for /f "tokens=2 delims= " %%v in ('%PY% --version') do echo Python %%v
 
-if not exist ".venv\Scripts\python.exe" (
-  echo creating .venv ...
-  %PY% -m venv .venv || (echo venv failed & pause & exit /b 1)
+set "VENV=%LOCALAPPDATA%\jwmcp\venv"
+if not exist "%VENV%\Scripts\python.exe" (
+  echo creating virtualenv %VENV% ...
+  %PY% -m venv "%VENV%" || (echo venv failed & pause & exit /b 1)
 )
-set "VPY=%ROOT%\.venv\Scripts\python.exe"
+set "VPY=%VENV%\Scripts\python.exe"
 "%VPY%" -m pip install --upgrade pip >nul
 echo installing jwmcp and dependencies ...
-"%VPY%" -m pip install -e ".[dev]" || (echo install failed & pause & exit /b 1)
+"%VPY%" -m pip install -e "%ROOT%[dev]" || (echo install failed & pause & exit /b 1)
+
+REM ---- shared data folders (next to the repo if they exist, else user profile)
+if exist "%SHARE%\exchange" (set "JWMCP_EXCHANGE=%SHARE%\exchange") else (set "JWMCP_EXCHANGE=%USERPROFILE%\JW_MCP_Exchange")
+if exist "%SHARE%\home" (set "JWMCP_HOME=%SHARE%\home") else (set "JWMCP_HOME=%USERPROFILE%\.jwmcp")
+echo data   : JWMCP_HOME=%JWMCP_HOME%
+echo bridge : JWMCP_EXCHANGE=%JWMCP_EXCHANGE%
+setx JWMCP_HOME "%JWMCP_HOME%" >nul
+setx JWMCP_EXCHANGE "%JWMCP_EXCHANGE%" >nul
 
 echo running tests ...
-"%VPY%" -m pytest -q || echo (some tests failed - the server may still work; see output above)
+"%VPY%" -m pytest -q "%ROOT%\tests" || echo (some tests failed - see above)
 
-echo preparing the 外部変形 exchange folder ...
-"%VPY%" -c "from jwmcp import bridge; import json; print(json.dumps(bridge.setup(), ensure_ascii=False, indent=1))"
+echo preparing the 外部変形 batch files in %JWMCP_EXCHANGE%\gaihen ...
+"%VPY%" -c "from jwmcp import bridge; r=bridge.setup(); print('\n'.join(r['bat_files']))"
 
-where claude >nul 2>&1 && (
-  echo registering with Claude Code ...
-  claude mcp add jwmcp --scope user -- "%VPY%" -m jwmcp && echo registered: jwmcp
-) || (
-  echo Claude Code CLI not found. Register manually:
-  echo   claude mcp add jwmcp --scope user -- "%VPY%" -m jwmcp
-  echo or add to Claude Desktop's claude_desktop_config.json:
-  echo   {"mcpServers": {"jwmcp": {"command": "%VPY:\=\\%", "args": ["-m", "jwmcp"]}}}
-)
-
+set "VPYJ=%VPY:\=\\%"
+set "HOMEJ=%JWMCP_HOME:\=\\%"
+set "EXJ=%JWMCP_EXCHANGE:\=\\%"
 echo.
-echo === done.
-echo   settings UI : scripts\windows\settings.bat   ^(http://127.0.0.1:8765^)
-echo   Jw_cad      : copy %USERPROFILE%\JW_MCP_Exchange\gaihen\*.bat where you like and pick them from 外部変形
-echo   The exchange folder is %USERPROFILE%\JW_MCP_Exchange ^(set JWMCP_EXCHANGE to move it, e.g. onto Google Drive^)
+echo === MCP server registration
+where claude >nul 2>&1 && (
+  claude mcp add jwmcp --scope user --env JWMCP_HOME="%JWMCP_HOME%" --env JWMCP_EXCHANGE="%JWMCP_EXCHANGE%" -- "%VPY%" -m jwmcp && echo registered with Claude Code: jwmcp
+)
+echo For Antigravity ^(Manage MCP servers ^> View raw config^) or Claude Desktop, add this to mcp_config.json:
+echo {"mcpServers": {"jwmcp": {"command": "%VPYJ%", "args": ["-m", "jwmcp"], "env": {"JWMCP_HOME": "%HOMEJ%", "JWMCP_EXCHANGE": "%EXJ%"}}}}
+echo.
+echo === done.  settings UI: scripts\windows\settings.bat   Jw_cad: 外部変形 ^> %JWMCP_EXCHANGE%\gaihen\JWMCP_send.bat
 pause
