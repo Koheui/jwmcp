@@ -287,7 +287,7 @@ def primitives(e: dict, scale: float) -> Iterable[dict]:
         pts = e["points"]
         seq = pts + ([pts[0]] if e.get("closed") and pts[0] != pts[-1] else [])
         for (x1, y1), (x2, y2) in zip(seq, seq[1:]):
-            yield {"type": "line", "x1": x1, "y1": y1, "x2": x2, "y2": y2, "curve": e["id"], **a}
+            yield {"type": "line", "x1": x1, "y1": y1, "x2": x2, "y2": y2, "curve": e.get("id", "pl"), **a}
     elif t == "rect":
         x, y, w, h, ang = e["x"], e["y"], e["w"], e["h"], e.get("angle", 0.0)
         corners = [(0, 0), (w, 0), (w, h), (0, h)]

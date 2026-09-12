@@ -116,6 +116,44 @@ async def profile_import_jww(req: Request):
     return _ok(p)
 
 
+async def profile_logo(req: Request):
+    name = req.path_params["name"]
+    path, form = await _save_upload(req, ".png")
+    src = str(path) if path else form.get("path")
+    if not src:
+        return _err("file or path required")
+    try:
+        thr = form.get("threshold")
+        r = profiles.set_logo(name, src, float(form.get("width_mm") or 40),
+                              threshold=int(thr) if thr not in (None, "", "auto") else None,
+                              invert=str(form.get("invert", "")).lower() in ("1", "true", "on"),
+                              simplify_px=float(form.get("simplify_px") or 1.0), lc=int(form.get("lc") or 2))
+        return _ok(r)
+    except (ModelError, RuntimeError, ValueError) as exc:
+        return _err(str(exc))
+
+
+async def profile_logo_delete(req: Request):
+    try:
+        return _ok(profiles.clear_logo(req.path_params["name"]))
+    except ModelError as exc:
+        return _err(str(exc), 404)
+
+
+async def profile_export_jwf(req: Request):
+    from .jwf import write_jwf
+    name = req.path_params["name"]
+    try:
+        p = profiles.load_profile(name)
+    except ModelError as exc:
+        return _err(str(exc), 404)
+    out = jwmcp_home() / "exports" / f"{name}.jwf"
+    r = write_jwf(p, str(out))
+    if req.query_params.get("download"):
+        return FileResponse(str(out), media_type="application/octet-stream", filename=f"{name}.jwf")
+    return _ok(r)
+
+
 async def preview_frame(req: Request):
     name = req.path_params["name"]
     paper = req.query_params.get("paper", "A3")
@@ -231,6 +269,9 @@ routes = [
     Route("/api/profile/{name}/from_preset", profile_from_preset, methods=["POST"]),
     Route("/api/profile/{name}/import_jwf", profile_import_jwf, methods=["POST"]),
     Route("/api/profile/{name}/import_jww", profile_import_jww, methods=["POST"]),
+    Route("/api/profile/{name}/export_jwf", profile_export_jwf),
+    Route("/api/profile/{name}/logo", profile_logo, methods=["POST"]),
+    Route("/api/profile/{name}/logo", profile_logo_delete, methods=["DELETE"]),
     Route("/api/preview/frame/{name}", preview_frame),
     Route("/api/preview/drawing/{name}", preview_drawing),
     Route("/api/drawing/{name}", drawing_get, methods=["GET"]),
@@ -307,6 +348,9 @@ details summary{cursor:pointer;color:var(--mute)}
  <p class="hint">Jw_cad で描いた枠をそのまま保存するなら: Jw_cad で枠を範囲選択 → 外部変形 JWMCP_send.bat → AI に「このジョブを図面枠として保存して」（profile_frame_from_job）。値の欄は空、会社名などの固定文字は欲しい大きさで描いておく。</p>
  <div class="row"><label>プリセットから初期化 <select id="presetSel"></select></label><button id="applyPreset">レイヤ構成と既定を読み込む</button>
  <span class="hint">既存の設定に上書き追加します</span></div>
+ <h3>Jw_cad へ反映する</h3>
+ <div class="row"><a id="exportJwf" href="#" class="hint"><button>Jw_cad 用 環境設定ファイル（.jwf）を書き出す</button></a>
+ <span class="hint">レイヤグループ名・レイヤ名・縮尺・線色・文字種を Jw_cad 側に持ち込む。Jw_cad で 設定 → 環境設定ファイル → 読込。取り込み元の .jwf のその他の設定はそのまま引き継ぎます</span></div>
 </section>
 <section id="t-layers"><h2>レイヤ構成（16 グループ × 16 レイヤ）</h2>
  <p class="hint">グループ名・縮尺（1/N）・レイヤ名。図面枠のグループは縮尺 1 にします。空欄は Jw_cad の既定のままです。</p>
@@ -326,6 +370,14 @@ details summary{cursor:pointer;color:var(--mute)}
  <label>値の文字高さ mm <input type="number" id="frValueH" step="0.5"></label>
  <label>ラベルの文字高さ mm <input type="number" id="frLabelH" step="0.5"></label></div>
  <div class="row"><span id="frTplInfo" class="hint"></span></div>
+ <h3>ロゴ（ビットマップ → 線データ）</h3>
+ <div class="row"><div class="drop" id="dropLogo" style="flex:1">ロゴ画像（PNG / BMP / JPG）をここへドロップ → 輪郭を線に変換してロゴ欄に入れる</div>
+  <div><label>ロゴ幅 mm <input type="number" id="logoW" value="40" step="1"></label><br>
+  <label>しきい値 <input type="text" id="logoThr" value="auto" style="width:60px"></label>
+  <label><input type="checkbox" id="logoInv"> 白抜き（明るい線）</label><br>
+  <label>簡略化 px <input type="number" id="logoSimp" value="1" step="0.5"></label>
+  <button id="logoDel">ロゴを外す</button></div></div>
+ <div class="row"><span id="logoInfo" class="hint"></span></div>
  <div class="row"><label>プレビュー用紙 <select id="frPaper"></select></label><label>縮尺 1/ <input type="number" id="frScale" value="50"></label><button id="frPrev">プレビュー更新</button>
  <span class="hint">保存してからプレビューが反映されます</span></div>
  <img class="prev" id="frImg" alt=""></section>
@@ -386,7 +438,8 @@ function fill(){$('#company').value=P.company||'';$('#desc').value=P.description
  const pb=$('#pipeTable tbody');pb.innerHTML='';PIPES.forEach(s=>{const v=(P.pipe_layers||{})[s]||[];pb.insertAdjacentHTML('beforeend',`<tr><td>${s}</td><td><select data-p="${s}.0"><option value="">（指定なし）</option>${HEX.map(h=>`<option value="${h}" ${v[0]!==undefined&&Number(v[0]).toString(16).toUpperCase()===h?'selected':''}>${h}</option>`).join('')}</select></td><td><select data-p="${s}.1"><option value="">（指定なし）</option>${HEX.map((h,i)=>`<option value="${i}" ${String(v[1])===String(i)?'selected':''}>${h}</option>`).join('')}</select></td></tr>`)});
  const f=P.frame||{};$('#frStyle').value=f.style||'strip';$('#frLg').value=f.lg??'F';$('#frMargin').value=f.margin??16;$('#frBottom').value=f.bottom??11.5;$('#frHeight').value=f.height??19;$('#frBorder').checked=!!f.border;$('#frCompany').value=(f.fields||{}).company||'';
  $('#frCompanyH').value=f.company_height??5;$('#frTitleH').value=f.title_height??3;$('#frValueH').value=f.value_height??2.5;$('#frLabelH').value=f.label_height??2;
- $('#frTplInfo').textContent=P.frame_template?`テンプレート取込済: ${P.frame_template.paper} から ${P.frame_template.entities.length} 要素（元グループ ${P.frame_template.source_lg}, 1/${P.frame_template.source_scale}）`:'テンプレート未取込（基本タブで .jww をドロップ）';
+ $('#frTplInfo').textContent=P.frame_template?`テンプレート取込済: ${P.frame_template.paper} から ${P.frame_template.entities.length} 要素（元グループ ${P.frame_template.source_lg??'-'}, 1/${P.frame_template.source_scale??'-'}）`:'テンプレート未取込（基本タブで .jww をドロップ、または Jw_cad から外部変形で送って保存）';
+ const lg=(P.frame||{}).logo;$('#logoInfo').textContent=lg?`ロゴ設定済: ${lg.source||''}（${lg.polylines.length} 図形 / ${lg.points||'-'} 点 / 幅 ${lg.width_mm} mm）。ロゴがあると会社名の文字は出しません`:'ロゴ未設定（会社名の文字を表示）';
  const pt=$('#penTable tbody');pt.innerHTML='';const DEF={1:[0,192,192],2:[0,0,0],3:[0,192,0],4:[192,192,0],5:[192,0,192],6:[0,0,255],7:[192,192,192],8:[255,0,128],9:[192,192,192]};
  for(let n=1;n<=9;n++){const rgb=((P.pen_colors||{})[n])||DEF[n];const hex='#'+rgb.map(v=>v.toString(16).padStart(2,'0')).join('');const pw=((P.print_colors||{})[n]||{}).width_mm??'';pt.insertAdjacentHTML('beforeend',`<tr><td>${n}</td><td><input type="color" data-pen="${n}" value="${hex}"></td><td class="hint">${rgb.join(',')}</td><td><input type="number" step="0.01" data-pw="${n}" value="${pw}"></td></tr>`)}
  const tt=$('#ttTable tbody');tt.innerHTML='';const TT=P.text_types||{};const dw=[2,2.5,3,4,5,6,7,8,9,10],dc=[1,1,2,2,3,3,4,4,5,5];
@@ -402,6 +455,7 @@ function collect(){const o={...P};o.company=$('#company').value;o.description=$(
  const pc={};$$('[data-pen]').forEach(i=>{const h=i.value;pc[i.dataset.pen]=[1,3,5].map(k=>parseInt(h.substr(k,2),16))});o.pen_colors=pc;
  const pr={...(P.print_colors||{})};$$('[data-pw]').forEach(i=>{if(i.value!==''){pr[i.dataset.pw]={...(pr[i.dataset.pw]||{}),width_mm:parseFloat(i.value)}}});o.print_colors=pr;
  const tt={};$$('[data-tt]').forEach(i=>{const [n,k]=i.dataset.tt.split('.');tt[n]=tt[n]||{};tt[n][k]=parseFloat(i.value)});o.text_types=tt;return o}
+$('#exportJwf').onclick=async e=>{e.preventDefault();try{await api('/api/profile/'+encodeURIComponent(P.name),{method:'PUT',body:JSON.stringify(collect())});window.location=`/api/profile/${encodeURIComponent(P.name)}/export_jwf?download=1`}catch(x){toast('エラー: '+x.message)}};
 $('#save').onclick=async()=>{try{P=collect();await api('/api/profile/'+encodeURIComponent(P.name),{method:'PUT',body:JSON.stringify(P)});toast('保存しました');await loadState()}catch(e){toast('エラー: '+e.message)}};
 $('#profSel').onchange=e=>loadProfile(e.target.value);$('#newProf').onclick=newProfile;
 $('#dupProf').onclick=()=>{const n=prompt('複製先の名前',P.name+'_copy');if(!n)return;P={...collect(),name:n};fill();toast('保存を押すと作成されます')};
@@ -410,6 +464,8 @@ $('#applyPreset').onclick=async()=>{try{await api('/api/profile/'+encodeURICompo
 function drop(el,handler){['dragenter','dragover'].forEach(ev=>el.addEventListener(ev,e=>{e.preventDefault();el.classList.add('hover')}));['dragleave','drop'].forEach(ev=>el.addEventListener(ev,e=>{e.preventDefault();el.classList.remove('hover')}));el.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)handler(f)});el.onclick=()=>{const i=document.createElement('input');i.type='file';i.onchange=()=>i.files[0]&&handler(i.files[0]);i.click()}}
 drop($('#dropJwf'),async f=>{try{await api('/api/profile/'+encodeURIComponent(P.name),{method:'PUT',body:JSON.stringify(collect())});const fd=new FormData();fd.append('file',f);P=await api('/api/profile/'+encodeURIComponent(P.name)+'/import_jwf',{method:'POST',body:fd});fill();toast('jwf を取り込みました')}catch(e){toast('エラー: '+e.message)}});
 drop($('#dropJww'),async f=>{try{await api('/api/profile/'+encodeURIComponent(P.name),{method:'PUT',body:JSON.stringify(collect())});const fd=new FormData();fd.append('file',f);fd.append('frame_lg',$('#frameLgSel').value);fd.append('frame_texts',$('#frameTextsSel').value);P=await api('/api/profile/'+encodeURIComponent(P.name)+'/import_jww',{method:'POST',body:fd});fill();toast('jww を取り込みました')}catch(e){toast('エラー: '+e.message)}});
+drop($('#dropLogo'),async f=>{try{await api('/api/profile/'+encodeURIComponent(P.name),{method:'PUT',body:JSON.stringify(collect())});const fd=new FormData();fd.append('file',f);fd.append('width_mm',$('#logoW').value);fd.append('threshold',$('#logoThr').value);fd.append('invert',$('#logoInv').checked?'1':'');fd.append('simplify_px',$('#logoSimp').value);const r=await api('/api/profile/'+encodeURIComponent(P.name)+'/logo',{method:'POST',body:fd});await loadProfile(P.name);toast(`ロゴを取り込みました（${r.polylines} 図形）`);$('#frPrev').click()}catch(e){toast('エラー: '+e.message)}});
+$('#logoDel').onclick=async()=>{try{await api('/api/profile/'+encodeURIComponent(P.name)+'/logo',{method:'DELETE'});await loadProfile(P.name);toast('ロゴを外しました')}catch(e){toast('エラー: '+e.message)}};
 $('#frPrev').onclick=()=>{$('#frImg').src=`/api/preview/frame/${encodeURIComponent(P.name)}?paper=${$('#frPaper').value}&scale=${$('#frScale').value}&t=${Date.now()}`};
 $('#jsonApply').onclick=()=>{try{P=JSON.parse($('#jsonArea').value);fill();toast('反映しました（保存で確定）')}catch(e){toast('JSON エラー: '+e.message)}};
 $('#drwLoad').onclick=async()=>{try{D=await api('/api/drawing/'+encodeURIComponent($('#drwSel').value));$('#drwPaper').value=D.paper;$('#drwScale').value=D.main_scale;$('#drwDesc').value=D.description||'';$('#drwInfo').textContent=`要素 ${D.entity_count} / プロファイル ${D.profile||'なし'}`;layerEditor($('#drwLayerEditor'),D.group_names_all,D.group_scales_all,D.layer_names);$('#drwImg').src=`/api/preview/drawing/${encodeURIComponent(D.name)}?t=${Date.now()}`}catch(e){toast('エラー: '+e.message)}};

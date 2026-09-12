@@ -28,7 +28,7 @@ if not exist "%VENV%\Scripts\python.exe" (
 set "VPY=%VENV%\Scripts\python.exe"
 "%VPY%" -m pip install --upgrade pip >nul
 echo installing jwmcp and dependencies ...
-"%VPY%" -m pip install -e "%ROOT%[dev]" || (echo install failed & pause & exit /b 1)
+"%VPY%" -m pip install -e "%ROOT%[dev,raster]" || (echo install failed & pause & exit /b 1)
 
 REM ---- data folders
 if exist "%SHARE%\home" (set "JWMCP_HOME=%SHARE%\home") else (set "JWMCP_HOME=%USERPROFILE%\.jwmcp")

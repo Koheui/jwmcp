@@ -160,6 +160,8 @@ def normalize_arch(d: dict, out: dict) -> dict:
                 val = {**v, **(val or {})}
             out[k] = val
         out["logo_text"] = str(d["logo_text"]) if d.get("logo_text") else None
+        if d.get("logo") and isinstance(d["logo"], dict) and d["logo"].get("polylines"):
+            out["logo"] = d["logo"]
         if out["style"] == "template":
             tpl = d.get("template")
             if not tpl or not tpl.get("entities"):
@@ -297,13 +299,16 @@ def _frame(e: dict, scale: float) -> Iterable[dict]:
                         yield T(left + 3.0, cy - hgt / 2, val, hgt, e["lc_value"])
                     else:
                         yield T((left + right) / 2, cy - hgt / 2, val, hgt, e["lc_value"], align="center")
-                comp = fields.get("company") or fields.get("logo")
-                if comp and len(vx) >= 2 and not any(label_key(p["text"]) == "company" for p in labels):
-                    right_edge = vx[-1]
-                    inner = [x for x in vx if x < right_edge - 1e-6]
-                    left_edge = inner[-1] if inner else right_edge - 60.0
-                    ch = float(e.get("company_height", 5.0))
-                    yield T((left_edge + right_edge) / 2, (yb + yt) / 2 - ch / 2, comp, ch, e["lc_value"], align="center")
+                right_edge = vx[-1] if vx else W / 2 - m
+                inner = [x for x in vx if x < right_edge - 1e-6]
+                left_edge = inner[-1] if inner else right_edge - 60.0
+                if e.get("logo"):
+                    yield from _logo_prims(e["logo"], left_edge, right_edge, yb, yt, base, k)
+                else:
+                    comp = fields.get("company") or fields.get("logo")
+                    if comp and len(vx) >= 2 and not any(label_key(p["text"]) == "company" for p in labels):
+                        ch = float(e.get("company_height", 5.0))
+                        yield T((left_edge + right_edge) / 2, (yb + yt) / 2 - ch / 2, comp, ch, e["lc_value"], align="center")
         return
 
     m, bot, h = float(e["margin"]), float(e["bottom"]), float(e["height"])
@@ -357,10 +362,38 @@ def _frame(e: dict, scale: float) -> Iterable[dict]:
             yield T(xs[i] + 3.0, cy - hh / 2, val, hh, lc_v)
         else:
             yield T(cx, cy - hh / 2, val, hh, lc_v, align="center")
+    if e.get("logo"):
+        yield from _logo_prims(e["logo"], xs[5], xs[6], y0, y1, base, k)
+        return
     logo = e.get("logo_text") or fields.get("logo") or fields.get("company")
     if logo:
         ch = float(e.get("company_height", 5.0))
         yield T((xs[5] + xs[6]) / 2, (y0 + y1) / 2 - ch / 2, logo, ch, lc_v, align="center")
+
+
+def _logo_prims(logo: dict, x_left: float, x_right: float, y_bot: float, y_top: float, base: dict, k: float):
+    """Place traced logo polylines (paper mm, lower-left origin) centred in a cell, fitted with a margin."""
+    from .model import rescale_prim
+    pls = logo.get("polylines") or []
+    if not pls:
+        return
+    w_img, h_img = float(logo.get("width_mm", 0) or 0), float(logo.get("height_mm", 0) or 0)
+    if w_img <= 0 or h_img <= 0:
+        return
+    margin = float(logo.get("margin", 2.0))
+    cw, ch = (x_right - x_left) - 2 * margin, (y_top - y_bot) - 2 * margin
+    s = min(cw / w_img, ch / h_img, float(logo.get("max_scale", 1.0)))
+    if s <= 0:
+        return
+    ox = (x_left + x_right) / 2 - w_img * s / 2
+    oy = (y_bot + y_top) / 2 - h_img * s / 2
+    lc = int(logo.get("lc", 2))
+    for pl in pls:
+        pts = pl["points"]
+        seq = pts + [pts[0]]
+        for (x1, y1), (x2, y2) in zip(seq, seq[1:]):
+            yield rescale_prim({"type": "line", "x1": ox + x1 * s, "y1": oy + y1 * s, "x2": ox + x2 * s, "y2": oy + y2 * s,
+                                **base, "lc": lc, "lt": 1, "frame": True, "logo": True}, k)
 
 
 # ---- wall -------------------------------------------------------------------

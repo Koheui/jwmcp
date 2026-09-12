@@ -216,10 +216,62 @@ def profile_set(name: str, company: str | None = None, description: str | None =
         return {"error": str(exc)}
 
 
+@app.tool(description="Vectorise a bitmap (PNG/BMP/JPG) into closed polylines by contour tracing (logos, symbols, north arrows). "
+                      "width_mm = width of the result; coordinates start at (0,0) lower-left, y up. Optionally add the result to a "
+                      "drawing at x,y (real mm) with scale. threshold: 0-255 (default Otsu); invert for light-on-dark art; "
+                      "simplify_px reduces points. Outlines only (no fills).")
+def image_trace(path: str, width_mm: float, drawing: str | None = None, x: float = 0, y: float = 0, scale: float = 1.0,
+                threshold: int | None = None, invert: bool = False, simplify_px: float = 1.0, min_area_px: float = 16.0,
+                lg: int = 0, ly: int = 0, lc: int = 2, tag: str = "trace") -> dict:
+    from .raster import trace_image, trace_to_entities
+    try:
+        res = trace_image(path, width_mm, threshold=threshold, invert=invert, simplify_px=simplify_px, min_area_px=min_area_px)
+    except (RuntimeError, ValueError) as exc:
+        return {"error": str(exc)}
+    out = {k: v for k, v in res.items() if k != "polylines"}
+    if drawing:
+        d = Drawing.load(drawing)
+        ids = d.add(trace_to_entities(res, x=x, y=y, scale=scale, lg=lg, ly=ly, lc=lc, tag=tag))
+        d.save()
+        out["added"] = len(ids); out["drawing"] = drawing
+    else:
+        out["polylines"] = res["polylines"][:200]
+    return out
+
+
+@app.tool(description="Trace a logo bitmap and attach it to a profile's title-block frame (drawn as lines in the logo cell, "
+                      "fitted to the cell with a margin). width_mm = logo width in paper mm before fitting.")
+def profile_set_logo(name: str, image: str, width_mm: float = 40, threshold: int | None = None, invert: bool = False,
+                     simplify_px: float = 1.0, min_area_px: float = 16.0, lc: int = 2, margin: float = 2.0) -> dict:
+    try:
+        return profiles.set_logo(name, image, width_mm, threshold=threshold, invert=invert, simplify_px=simplify_px,
+                                 min_area_px=min_area_px, lc=lc, margin=margin)
+    except (ModelError, RuntimeError, ValueError) as exc:
+        return {"error": str(exc)}
+
+
+@app.tool(description="Remove the logo from a profile's frame.")
+def profile_clear_logo(name: str) -> dict:
+    return profiles.clear_logo(name)
+
+
 @app.tool(description="Read a Jw_cad environment file (.jwf / jw_win.jwf): paper, pen colours, printer widths, 文字種 sizes, font, "
                       "default group scales, layer names.")
 def jwf_read(path: str) -> dict:
     return jwf_summary(parse_jwf(path))
+
+
+@app.tool(description="Write a Jw_cad environment file (.jwf) from a profile: layer-group names, layer names, group scales, "
+                      "pen colours, printer widths, 文字種. Load it in Jw_cad (設定 > 環境設定ファイル > 読込) to get the same "
+                      "layer names/scales for new drawings. Other settings are copied from the profile's source .jwf.")
+def profile_export_jwf(name: str, out: str | None = None, base_jwf: str | None = None) -> dict:
+    from .jwf import write_jwf
+    try:
+        p = profiles.load_profile(name)
+    except ModelError as exc:
+        return {"error": str(exc)}
+    outdir = jwmcp_home() / "exports"; outdir.mkdir(exist_ok=True)
+    return write_jwf(p, out or str(outdir / f"{name}.jwf"), base_jwf)
 
 
 @app.tool(description="Create/update a profile from a .jwf (pen colours, 文字種, font, default group scales, layer names).")

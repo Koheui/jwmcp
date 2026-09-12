@@ -218,6 +218,29 @@ def from_jww(path: str, name: str, base: dict | None = None, frame_lg: int | Non
     return prof
 
 
+def set_logo(name: str, image_path: str, width_mm: float, *, threshold: int | None = None, invert: bool = False,
+             simplify_px: float = 1.0, min_area_px: float = 16.0, lc: int = 2, margin: float = 2.0) -> dict:
+    """Trace a bitmap logo and store it in profile.frame.logo (polylines in paper mm)."""
+    from .raster import trace_image
+    prof = load_profile(name)
+    res = trace_image(image_path, width_mm, threshold=threshold, invert=invert, simplify_px=simplify_px,
+                      min_area_px=min_area_px)
+    prof.setdefault("frame", {"lg": "F", "style": "strip"})
+    prof["frame"]["logo"] = {"polylines": [{"points": pl["points"], "hole": pl["hole"]} for pl in res["polylines"]],
+                             "width_mm": res["width_mm"], "height_mm": res["height_mm"], "source": Path(image_path).name,
+                             "lc": lc, "margin": margin, "points": res["points"]}
+    save_profile(prof)
+    return {"profile": name, "polylines": res["count"], "points": res["points"], "width_mm": res["width_mm"],
+            "height_mm": round(res["height_mm"], 2), "threshold": res["threshold"]}
+
+
+def clear_logo(name: str) -> dict:
+    prof = load_profile(name)
+    removed = bool(prof.get("frame", {}).pop("logo", None))
+    save_profile(prof)
+    return {"profile": name, "removed": removed}
+
+
 def frame_from_job(job, name: str, base: dict | None = None, paper: str | None = None,
                    frame_texts: str = "all") -> dict:
     """Capture the entities of a 外部変形 job (the frame selected in Jw_cad) as the profile's frame template."""
@@ -292,7 +315,7 @@ def frame_entity(prof: dict, paper: str, fields: dict | None = None, lg: str | i
     ent = {"type": "frame", "paper": paper, "lg": g, "ly": int(fr.get("ly", 0)),
            "style": fr.get("style", "strip"), "fields": dict(fr.get("fields", {}))}
     for k in ("margin", "bottom", "height", "border", "border_margin", "labels", "lc_outer", "lc_div", "lc_label",
-              "lc_value", "label_height", "title_height", "value_height", "company_height", "logo_text", "columns"):
+              "lc_value", "label_height", "title_height", "value_height", "company_height", "logo_text", "columns", "logo"):
         if k in fr:
             ent[k] = fr[k]
     if fields:

@@ -114,6 +114,74 @@ def parse_jwf(path: str) -> dict:
     return out
 
 
+def write_jwf(profile: dict, out: str, base_jwf: str | None = None) -> dict:
+    """Write a Jw_cad environment file carrying the profile's layer-group names / layer names / scales,
+    pen colours, printer widths and text types. Load it in Jw_cad (設定 > 環境設定ファイル > 読込) or save it as
+    Jw_win.jwf next to Jw_win.exe. Lines the profile does not define are copied from `base_jwf` (the file the
+    profile was imported from, when available) so nothing else in the user's environment changes."""
+    base_path = base_jwf or (profile.get("sources") or {}).get("jwf")
+    lines: list[str] = []
+    if base_path and Path(base_path).expanduser().exists():
+        raw = Path(base_path).expanduser().read_bytes()
+        try:
+            text = raw.decode("cp932")
+        except UnicodeDecodeError:
+            text = raw.decode("cp932", errors="replace")
+        lines = text.splitlines()
+    new: dict[str, str] = {}
+    gs = profile.get("group_scales") or {}
+    if gs:
+        cur = {}
+        for ln in lines:
+            if ln.strip().startswith("LAYSCALE"):
+                cur = {f"{i:X}": v for i, v in enumerate(_nums(ln.split("=", 1)[1].split()))}
+        vals = [str(int(gs.get(f"{i:X}", cur.get(f"{i:X}", 1)))) if float(gs.get(f"{i:X}", cur.get(f"{i:X}", 1))).is_integer()
+                else str(gs.get(f"{i:X}", cur.get(f"{i:X}", 1))) for i in range(16)]
+        new["LAYSCALE"] = " ".join(vals)
+    gn = profile.get("group_names") or {}
+    ln_ = profile.get("layer_names") or {}
+    if gn or ln_:
+        for g in range(16):
+            key = f"{g:X}"
+            fields = [gn.get(key, "")] + [ln_.get(f"{key}-{l:X}", "") for l in range(16)]
+            new[f"LAYNAM_{key}"] = ",".join(fields)
+    for n, rgb in (profile.get("pen_colors") or {}).items():
+        if 1 <= int(n) <= 8 and len(rgb) == 3:
+            new[f"LCOLLOR_{int(n)}"] = f"{int(rgb[0]):3d}  {int(rgb[1]):3d}  {int(rgb[2]):3d}    1"
+    for n, d in (profile.get("print_colors") or {}).items():
+        if 1 <= int(n) <= 8 and d.get("rgb"):
+            r, g, b = d["rgb"]
+            new[f"PCOLLOR_{int(n)}"] = f"{int(r):3d}  {int(g):3d}  {int(b):3d}    {int(d.get('width_index', 1))}    {float(d.get('width_mm', 0.3)):.2f}"
+    tt = profile.get("text_types") or {}
+    if len(tt) >= 10:
+        rows = [tt[str(n)] if str(n) in tt else tt.get(n, {}) for n in range(1, 11)]
+        new["MWIDE"] = "  ".join(f"{float(r.get('width', 2)):.1f}" for r in rows)
+        new["MHIGH"] = "  ".join(f"{float(r.get('height', 2)):.1f}" for r in rows)
+        new["MDIST"] = "  ".join(f"{float(r.get('spacing', 0)):.1f}" for r in rows)
+        new["MPEN"] = "  ".join(f"{int(r.get('pen', 1))}" for r in rows)
+    out_lines: list[str] = []
+    seen: set[str] = set()
+    for ln in lines:
+        s = ln.strip()
+        if "=" in s and not s.startswith("#"):
+            k = s.split("=", 1)[0].strip()
+            if k in new:
+                out_lines.append(f"{k} = {new[k]}")
+                seen.add(k)
+                continue
+        out_lines.append(ln)
+    for k, v in new.items():
+        if k not in seen:
+            out_lines.append(f"{k} = {v}")
+    if not lines:
+        out_lines.insert(0, f"# jwmcp profile '{profile.get('name')}' — Jw_cad 環境設定ファイル（設定 > 環境設定ファイル > 読込）")
+    outp = Path(out).expanduser()
+    outp.parent.mkdir(parents=True, exist_ok=True)
+    outp.write_bytes(("\r\n".join(out_lines) + "\r\n").encode("cp932", errors="replace"))
+    return {"jwf": str(outp), "keys_written": sorted(new), "based_on": base_path,
+            "how_to_apply": "Jw_cad: 設定 > 環境設定ファイル > 読込 でこのファイルを選ぶ（新規図面から有効。Jw_win.exe の隣に Jw_win.jwf として置けば起動時に自動）"}
+
+
 def pen_palette_colorref(pen_colors: dict) -> list[int]:
     """Build the 10-entry COLORREF palette used by the renderer from parsed pen colours."""
     from .model import DEFAULT_PEN_COLORREF
