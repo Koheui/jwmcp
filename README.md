@@ -54,6 +54,10 @@ Claude Desktop / Antigravity など他の MCP クライアントも同様に std
 4. 設定画面は `scripts\windows\settings.bat`
 5. Jw_cad 側は `JW_MCP_Exchange\gaihen\JWMCP_send.bat` などを外部変形から選ぶだけ。同じ PC なので共有フォルダの同期は不要
 
+DXF を Jw_cad で開くときの約束: DXF には縮尺情報が無く座標は実寸 mm なので、
+基本設定「DXF・SXF・JWC」の **「図面範囲を読取る」を OFF** にし、新規図面で **用紙と縮尺を出力時の値（例: A3・1/50）に合わせてから** 開く。
+ON のままだと Jw_cad が現在の用紙サイズから縮尺を推定し、意図しない用紙・縮尺になる。
+
 Mac に Claude、Windows に Jw_cad という分担でも動きます。その場合は `JWMCP_EXCHANGE` を Google Drive 等の同期フォルダにし、
 `gaihen_setup(win_exchange="G:\\マイドライブ\\JW_MCP_Exchange")` のように Windows 側から見たパスを渡して .bat を作ります。
 

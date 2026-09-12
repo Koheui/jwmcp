@@ -139,4 +139,6 @@ def write_dxf(entities: Iterable[dict], out: str, *, scale_for: Callable[[dict],
     doc.saveas(str(outp))
     return {"dxf": str(outp), "entities": count, "layers": sorted(layers_made), "size_bytes": outp.stat().st_size,
             "dxf_version": doc.dxfversion, "encoding": doc.encoding, "extents": ext,
-            "jw_cad_hint": "基本設定 > DXF・SXF・JWC で「図面範囲を読取る」をON。用紙と縮尺が自動で決まる"}
+            "paper": paper, "scale": f"1/{main_scale:g}" if main_scale else None,
+            "jw_cad_hint": "Jw_cad: 基本設定 > DXF・SXF・JWC の「図面範囲を読取る」を OFF にし、新規図面で用紙と縮尺を上の paper/scale に"
+                           "合わせてから DXF を開く（DXF には縮尺が無く、座標は実寸 mm）"}
