@@ -52,9 +52,36 @@ class JwcTemp:
         self.layer_state: dict[str, dict] = {}
         self.unparsed: list[str] = []
 
+    # ------------------------------------------------------------------
+    def base_offsets(self) -> dict[int, tuple[float, float]] | None:
+        """With `REM #hp` the 外部変形 base point is the paper's lower-left corner, while Jw_cad's drawing
+        origin is the paper centre. Returns per-group (dx, dy) = paper half size × group scale, or None
+        when the paper size (hzs, needs REM #zs) is unknown."""
+        if not self.hzs:
+            return None
+        w, h = self.hzs
+        return {g: (w / 2 * self.hs[g], h / 2 * self.hs[g]) for g in range(16)}
+
+    def to_drawing_coords(self) -> bool:
+        """Convert entities / selection range / points from paper-lower-left base to drawing origin."""
+        off = self.base_offsets()
+        if not off or getattr(self, "_converted", False):
+            return False
+        from .model import shift_prim
+        self.entities = [shift_prim(e, -off[int(e.get("lg", 0))][0], -off[int(e.get("lg", 0))][1]) if e.get("type") != "block" else e
+                         for e in self.entities]
+        g = self.write.get("lg", 0)
+        if self.hn:
+            self.hn = [self.hn[0] - off[g][0], self.hn[1] - off[g][1], self.hn[2] - off[g][0], self.hn[3] - off[g][1]]
+        for pt in self.points.values():
+            pt["x"] -= off[g][0]; pt["y"] -= off[g][1]
+        self._converted = True
+        return True
+
     def to_dict(self) -> dict:
         return {
             "hq": self.hq, "file": self.file, "axis_angle": self.hk,
+            "coordinates": "drawing_origin (converted from paper lower-left base)" if getattr(self, "_converted", False) else "as_written (relative to the 外部変形 base point)",
             "scales": {f"{i:X}": v for i, v in enumerate(self.hs)},
             "paper_mm": self.hzs, "selection_range": self.hn, "paper_coords": self.bz,
             "text_types": {"width": self.hcw, "height": self.hch, "spacing": self.hcd, "color": self.hcc},
@@ -309,8 +336,10 @@ def parse(text: str) -> JwcTemp:
 def serialize(entities: list[dict], *, scale_for=None, delete_selected: bool = False,
               error: str | None = None, notice: str | None = None,
               group_names: dict[int, str] | None = None, layer_names: dict[str, str] | None = None,
-              repeat: bool = False) -> str:
-    """Build the text Jw_cad reads back. Coordinates real mm. Returns str (encode with cp932)."""
+              repeat: bool = False, offset_for=None) -> str:
+    """Build the text Jw_cad reads back. Coordinates real mm. Returns str (encode with cp932).
+    offset_for(lg) -> (dx, dy) shifts primitives of that layer group (used to convert drawing-absolute
+    coordinates back to the 外部変形 base point)."""
     out: list[str] = []
     if error:
         out.append("he" + error.replace("\r", "").replace("\n", " "))
@@ -340,6 +369,10 @@ def serialize(entities: list[dict], *, scale_for=None, delete_selected: bool = F
         sc = scale_for(e)
         for p in primitives(e, sc):
             p = dict(p); p["_scale"] = sc
+            if offset_for is not None:
+                from .model import shift_prim
+                dx, dy = offset_for(int(p.get("lg", 0)))
+                p = shift_prim(p, dx, dy); p["_scale"] = sc
             prims.append(p)
 
     order = {"line": 0, "circle": 1, "arc": 1, "point": 2, "solid": 3, "text": 4}

@@ -25,6 +25,16 @@ Jw_cad を AI から扱う MCP サーバー。全体像と使い方は README.md
 - ベクター PDF（CAD 出力）は scan_vector_import で線をそのまま取れる。pdfplumber の `path` 命令を辿ること
   （`pts` をつなぐとサブパス間の移動が線になる）。
 
+## 会社設定＝プロファイル（2026-09-12）
+- レイヤグループ・レイヤ名・縮尺・部品ごとの既定・線色・文字種・図面枠は `~/.jwmcp/profiles/<name>.json` に集約。
+  `profile_from_jwf`（jw_win.JWF）＋ `profile_from_jww(frame_lg=…)`（既存図面から枠を学習）＋ `profile_set` で作る。
+- 図面枠は専用グループ（既定 F）を **1/1** にして置く。DXF・プレビューは主縮尺に合わせて枠を拡大（`Drawing.unified_entities`）、
+  外部変形テキストはグループ別実寸のまま（Jw_cad 側テンプレートでグループ F を 1/1 に）。
+- 浩平さんの自社枠（KDICリニューアルプラン_2.jww のグループ0）は「下端の表題帯（No./Title/Drawing/Scale/Note/ロゴ）」。
+  テンプレート取り込み時は元図の値文字と `^@BM` 画像参照を落とし、ラベル位置からセルを推定して値を差し込む。
+- 外部変形の座標は「基準点相対」。send 系 .bat は `#hp`（基準点＝用紙左下）＋`#zs` で用紙サイズを得て図面原点（用紙中心）に換算する。
+  import.bat は `#0` で取り込み位置を 1 点指示させる。
+
 ## 環境
 - Python 3.11 venv（`.venv`）。mcp SDK は **2.x**（`from mcp.server.mcpserver import MCPServer, Image`）。
   画像を返すツールは `structured_output=False` が必要。

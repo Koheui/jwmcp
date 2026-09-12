@@ -94,23 +94,27 @@ echo [JW MCP] timeout - nothing changed.
 exit /b 0
 """
 
+# Coordinate base: with `#hp` Jw_cad writes coordinates relative to the paper's lower-left corner
+# (deterministic), and `#zs` writes the paper size, so we can convert to/from the drawing origin
+# (paper centre). The import batch asks for one point (`#0`): the AI drawing's (0,0) lands there.
 BATS = {
     "JWMCP_send.bat": {
         "kind": "send",
         "header": ["REM AI連携: 選択図形をClaudeへ送り、応答を取り込む (JW MCP)", "REM #jww", "REM #cd", "REM #hf", "REM #h2",
-                   "REM #hcClaudeに渡す図形を範囲選択（文字を含めるなら終点を右クリック）", "REM #zz", "REM #zc", "REM #gn", "REM #zs", "REM #e"],
+                   "REM #hcClaudeに渡す図形を範囲選択（文字を含めるなら終点を右クリック）", "REM #g1", "REM #hp",
+                   "REM #zz", "REM #zc", "REM #gn", "REM #zs", "REM #e"],
         "body": _BAT_SEND_BODY,
     },
     "JWMCP_send_all.bat": {
         "kind": "sendall",
-        "header": ["REM AI連携: 図面全体をClaudeへ送る (JW MCP)", "REM #jww", "REM #cd", "REM #hf", "REM #h4", "REM #g1",
+        "header": ["REM AI連携: 図面全体をClaudeへ送る (JW MCP)", "REM #jww", "REM #cd", "REM #hf", "REM #h4", "REM #g1", "REM #hp",
                    "REM #zz", "REM #zc", "REM #gn", "REM #zs", "REM #e"],
         "body": _BAT_SEND_BODY,
     },
     "JWMCP_import.bat": {
         "kind": "import",
         "header": ["REM AI連携: Claudeが用意した図形を取り込む (JW MCP)", "REM #jww", "REM #cd", "REM #hf", "REM #h0",
-                   "REM #gn", "REM #zs", "REM #e"],
+                   "REM #0取り込み位置（AI図面の原点）を指示  (L)free (R)Read", "REM #gn", "REM #zs", "REM #e"],
         "body": _BAT_IMPORT_BODY,
     },
 }
@@ -180,8 +184,20 @@ def job_path(exchange: Path | None, job_id: str) -> Path:
     return p
 
 
-def read_job(exchange: Path | None, job_id: str) -> jwc_temp.JwcTemp:
-    return jwc_temp.parse(jwc_temp.decode(job_path(exchange, job_id).read_bytes()))
+def read_job(exchange: Path | None, job_id: str, drawing_coords: bool = True) -> jwc_temp.JwcTemp:
+    j = jwc_temp.parse(jwc_temp.decode(job_path(exchange, job_id).read_bytes()))
+    kind = job_id.rsplit("_", 1)[-1]
+    if drawing_coords and kind in ("send", "sendall"):
+        j.to_drawing_coords()
+    return j
+
+
+def response_offset_for(j: jwc_temp.JwcTemp):
+    """offset_for(lg) used when answering a job whose coordinates were converted to the drawing origin."""
+    off = j.base_offsets() if getattr(j, "_converted", False) else None
+    if not off:
+        return None
+    return lambda lg: off.get(int(lg), (0.0, 0.0))
 
 
 def _atomic_write(target: Path, data: bytes) -> None:

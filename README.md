@@ -72,6 +72,19 @@ Claude Desktop / Antigravity など他の MCP クライアントも同様に std
 プリセット（`presets_list`）: `arch_jp`（一般平面図）, `arch_jp_renovation`（既存図。0敷地 1記述 2躯体 3建具 4内部壁 5計画図）, `mep_jp`（設備図）。
 プリセット付きの図面では、部品の種類ごとにレイヤグループ・レイヤ・線色が自動で入ります。
 
+### プロファイル（会社設定）と図面枠
+`profile_list` `profile_show` `profile_set` `profile_from_jwf(path, name)` `profile_from_jww(path, name, frame_lg?)` `jwf_read` `drawing_frame`
+
+レイヤグループ名・レイヤ名・縮尺・部品ごとの既定レイヤ・線色・文字種・図面枠を **1 つの JSON**（`$JWMCP_HOME/profiles/<name>.json`）にまとめ、
+`drawing_new(profile="...", frame=true, fields={...})` で新規図面に一括適用します。
+
+- `.jwf`（Jw_cad 環境設定）から線色 RGB・印刷線幅・文字種 1〜10 の寸法・フォント・既定縮尺を取り込む
+- 既存の `.jww` からレイヤグループの縮尺・名前を学習し、`frame_lg` を指定するとそのグループを **図面枠テンプレート**として取り込む
+  （図寸 mm に変換して保存。A4〜A1 どの用紙でも S=1:1 のグループに配置し、横方向は用紙幅に合わせて伸縮、下端からの距離は維持）
+- テンプレートが無ければ内蔵の表題帯（No. / Title / Drawing / Scale / Note / ロゴ）を用紙サイズに合わせて生成
+- 図面枠は専用レイヤグループ（既定 F）を 1/1 にして置く。DXF 出力とプレビューでは主縮尺に合わせて自動で拡大し、
+  外部変形テキストではグループごとの実寸のまま出す（Jw_cad 側でグループ F を 1/1 にしておく）
+
 ### 外部変形ブリッジ
 `gaihen_setup(exchange?, win_exchange?, wait)` `gaihen_status` `gaihen_jobs` `gaihen_read` `gaihen_preview`
 `gaihen_respond(job_id, entities | drawing, delete_selected?, notice?)` `gaihen_cancel` `gaihen_prepare_import` `jwc_temp_parse`

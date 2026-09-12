@@ -21,6 +21,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
+from .arch import ARCH_TYPES, ArchError, arch_primitives, normalize_arch
+
 # ---------------------------------------------------------------------------
 # Jw_cad constant tables
 # ---------------------------------------------------------------------------
@@ -350,6 +352,37 @@ def _dimension_primitives(e: dict, scale: float) -> Iterable[dict]:
            "spacing": 0.0, "angle": ang, "align": "left", "kind": "cs", "dim": True, **a}
 
 
+_COORD_KEYS = ("x1", "y1", "x2", "y2", "cx", "cy", "x", "y", "r")
+
+
+def rescale_prim(p: dict, k: float) -> dict:
+    """Multiply every coordinate (and radius) of a primitive by k. Text sizes (paper mm) are untouched."""
+    if k == 1.0:
+        return p
+    q = dict(p)
+    for key in _COORD_KEYS:
+        if key in q and isinstance(q[key], (int, float)):
+            q[key] = q[key] * k
+    if "points" in q:
+        q["points"] = [[a * k, b * k] for a, b in q["points"]]
+    if "extent" in q and isinstance(q["extent"], list):
+        q["extent"] = [v * k for v in q["extent"]]
+    return q
+
+
+def shift_prim(p: dict, dx: float, dy: float) -> dict:
+    """Translate a primitive."""
+    if dx == 0 and dy == 0:
+        return p
+    q = dict(p)
+    for kx, ky in (("x1", "y1"), ("x2", "y2"), ("cx", "cy"), ("x", "y")):
+        if kx in q and isinstance(q[kx], (int, float)):
+            q[kx] = q[kx] + dx; q[ky] = q[ky] + dy
+    if "points" in q:
+        q["points"] = [[a + dx, b + dy] for a, b in q["points"]]
+    return q
+
+
 def text_anchor_left(e: dict, scale: float) -> tuple[float, float, float]:
     """Return (x, y, length_real) of the left-bottom anchor for a text entity honouring align."""
     length = text_length_paper(e["text"], e.get("width", e.get("height", 3.0)), e.get("spacing", 0.0)) * scale
@@ -433,6 +466,8 @@ class Drawing:
         self.paper = paper
         self.description = description
         self.preset: str | None = None
+        self.profile: str | None = None
+        self.main_scale: float = float(scale)
         self.group_scales: dict[int, float] = {i: float(scale) for i in range(16)}
         self.group_names: dict[int, str] = {}
         self.layer_names: dict[str, str] = {}   # "lg-ly" -> name
@@ -470,6 +505,7 @@ class Drawing:
     def to_dict(self) -> dict:
         return {
             "name": self.name, "paper": self.paper, "description": self.description, "preset": self.preset,
+            "profile": self.profile, "main_scale": self.main_scale,
             "group_scales": {str(k): v for k, v in self.group_scales.items()},
             "group_names": {str(k): v for k, v in self.group_names.items()},
             "layer_names": self.layer_names, "entities": self.entities,
@@ -480,6 +516,8 @@ class Drawing:
     def from_dict(cls, d: dict) -> "Drawing":
         dr = cls(d["name"], paper=d.get("paper", "A3"), description=d.get("description", ""))
         dr.preset = d.get("preset")
+        dr.profile = d.get("profile")
+        dr.main_scale = float(d.get("main_scale", 100.0))
         dr.group_scales = {int(k): float(v) for k, v in d.get("group_scales", {}).items()} or dr.group_scales
         dr.group_names = {int(k): v for k, v in d.get("group_names", {}).items()}
         dr.layer_names = dict(d.get("layer_names", {}))
@@ -492,11 +530,23 @@ class Drawing:
         return self.group_scales.get(int(e.get("lg", 0)), 100.0)
 
     def preset_defaults(self, e: dict) -> dict:
-        """Layer/colour defaults from the drawing's preset for this entity type (empty if none)."""
-        if not self.preset:
+        """Layer/colour defaults from the drawing's preset / profile for this entity type (empty if none)."""
+        p: dict = {}
+        if self.preset:
+            from .presets import PRESETS
+            p = dict(PRESETS.get(self.preset) or {})
+        if self.profile:
+            try:
+                from .profiles import load_profile
+                prof = load_profile(self.profile)
+                merged_defaults = {**p.get("defaults", {})}
+                for t_, d_ in prof.get("defaults", {}).items():
+                    merged_defaults[t_] = {**merged_defaults.get(t_, {}), **d_}
+                p = {**p, "defaults": merged_defaults, "pipe_layers": {**p.get("pipe_layers", {}), **prof.get("pipe_layers", {})}}
+            except ModelError:
+                pass
+        if not p:
             return {}
-        from .presets import PRESETS
-        p = PRESETS.get(self.preset) or {}
         t = str(e.get("type", "")).lower()
         dflt = dict(p.get("defaults", {}).get(t, {}))
         if t == "pipe" and "pipe_layers" in p:
@@ -518,11 +568,23 @@ class Drawing:
         self.entities = [e for e in self.entities if e["id"] not in ids]
         return before - len(self.entities)
 
-    def primitives(self) -> list[dict]:
+    def primitives(self, unify_scale: bool = False) -> list[dict]:
+        """Expand to primitives. unify_scale=True rescales every layer group into the main scale's real-mm
+        space (what a single-model-space format like DXF, or a picture, needs when groups differ in scale)."""
         out = []
         for e in self.entities:
-            out.extend(primitives(e, self.scale_of(e)))
+            sc = self.scale_of(e)
+            k = (self.main_scale / sc) if (unify_scale and sc != self.main_scale) else 1.0
+            for p in primitives(e, sc):
+                out.append(rescale_prim(p, k) if k != 1.0 else p)
         return out
+
+    def unified_entities(self) -> list[dict]:
+        """Primitive entities in main-scale space, usable by render()/write_dxf() with a constant scale."""
+        return self.primitives(unify_scale=True)
+
+    def scale_for_unified(self, e: dict) -> float:
+        return self.main_scale
 
     def bbox(self) -> dict | None:
         return bbox_of(self.entities, self.scale_of)

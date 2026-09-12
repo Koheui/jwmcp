@@ -45,6 +45,28 @@ class JwwFile:
     def scale_of(self, e: dict) -> float:
         return self.group_scales.get(int(e.get("lg", 0)), 1.0)
 
+    @property
+    def main_scale(self) -> float:
+        """Scale of the layer group holding most entities (the 'drawing scale')."""
+        c = Counter(self.scale_of(e) for e in self.entities)
+        return c.most_common(1)[0][0] if c else 1.0
+
+    def unified_entities(self, main_scale: float | None = None) -> list[dict]:
+        """Entities rescaled into one real-mm space (main scale), for previews / DXF with mixed-scale groups."""
+        from .model import rescale_prim
+        ms = main_scale or self.main_scale
+        out = []
+        for e in self.entities:
+            sc = self.scale_of(e)
+            k = ms / sc
+            if k == 1.0:
+                out.append(e); continue
+            q = rescale_prim(e, k)
+            if e["type"] == "dimfigure" and e.get("value_text"):
+                vt = dict(e["value_text"]); vt["x"] *= k; vt["y"] *= k; q["value_text"] = vt
+            out.append(q)
+        return out
+
     def _base(self, raw: dict, idx: int | str) -> dict:
         b = raw.get("base") or {}
         return {"id": f"j{idx}", "lg": int(b.get("layer_group", 0)), "ly": int(b.get("layer", 0)),

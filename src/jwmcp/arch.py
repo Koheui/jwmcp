@@ -20,7 +20,18 @@ from __future__ import annotations
 import math
 from typing import Iterable
 
-ARCH_TYPES = {"wall", "grid", "column", "room", "pipe", "equipment"}
+ARCH_TYPES = {"wall", "grid", "column", "room", "pipe", "equipment", "frame"}
+
+# Title-block strip (図面枠) defaults — derived from the Future Studio frame: a strip along the bottom
+# edge with No. | Title | Drawing | Scale | Note | logo cells. Paper mm; meant for a layer group at S=1:1.
+FRAME_DEFAULTS = {
+    "margin": 16.0, "bottom": 11.5, "height": 19.0, "header": 3.0,
+    "columns": {"no": 19.0, "drawing": 41.0, "scale": 41.0, "logo": 77.0, "title_ratio": 0.44},
+    "labels": {"no": "No.", "title": "Title", "drawing": "Drawing", "scale": "Scale", "note": "Note"},
+    "lc_outer": 5, "lc_div": 3, "lc_label": 1, "lc_value": 2, "lc_guide": 9,
+    "label_height": 2.0, "title_height": 3.0, "value_height": 2.5,
+    "border": False, "border_margin": 10.0,
+}
 
 OPENING_KINDS = {"door", "double_door", "sliding", "window", "fixed", "opening"}
 
@@ -133,6 +144,27 @@ def normalize_arch(d: dict, out: dict) -> dict:
         out["label"] = bool(d.get("label", True))
         out["label_height"] = _f(d, "label_height", 2.5)
         out["label_offset"] = _f(d, "label_offset", 1.5)
+    elif t == "frame":
+        from .model import PAPER_SIZES_MM
+        paper = str(d.get("paper", "A3"))
+        if paper not in PAPER_SIZES_MM:
+            raise ArchError(f"paper must be one of {list(PAPER_SIZES_MM)}")
+        out["paper"] = paper
+        out["style"] = str(d.get("style", "strip"))
+        if out["style"] not in ("strip", "template"):
+            raise ArchError("frame style must be strip | template")
+        out["fields"] = {str(k): str(v) for k, v in (d.get("fields") or {}).items()}
+        for k, v in FRAME_DEFAULTS.items():
+            val = d.get(k, v)
+            if isinstance(v, dict):
+                val = {**v, **(val or {})}
+            out[k] = val
+        out["logo_text"] = str(d["logo_text"]) if d.get("logo_text") else None
+        if out["style"] == "template":
+            tpl = d.get("template")
+            if not tpl or not tpl.get("entities"):
+                raise ArchError("frame style=template needs 'template': {paper, entities}")
+            out["template"] = tpl
     elif t == "equipment":
         kind = str(d.get("kind", "box")).lower()
         out["kind"] = kind
@@ -191,8 +223,142 @@ def arch_primitives(e: dict, scale: float) -> Iterable[dict]:
         yield from _pipe(e, scale)
     elif t == "equipment":
         yield from _equipment(e, scale)
+    elif t == "frame":
+        yield from _frame(e, scale)
     else:
         raise ArchError(f"unknown arch type {t}")
+
+
+# ---- frame (図面枠) -----------------------------------------------------------
+
+def _frame(e: dict, scale: float) -> Iterable[dict]:
+    """Coordinates are paper mm × scale (scale should be 1 for a true S=1:1 frame group), origin = paper centre."""
+    from .model import PAPER_SIZES_MM, rescale_prim, text_length_paper
+    W, H = PAPER_SIZES_MM[e["paper"]]
+    k = scale
+    base = {"lg": e["lg"], "ly": e["ly"], "lt": 1}
+
+    def L(x1, y1, x2, y2, lc, lt=1):
+        return rescale_prim({"type": "line", "x1": x1, "y1": y1, "x2": x2, "y2": y2, **base, "lc": lc, "lt": lt, "frame": True}, k)
+
+    def T(x, y, s, h, lc, align="left", cn=None):
+        t = {"type": "text", "x": x, "y": y, "text": s, "height": h, "width": h, "spacing": 0.0, "angle": 0.0,
+             "align": align, "kind": "ch", **base, "lc": lc, "frame": True}
+        if cn:
+            t["cn"] = cn
+        return rescale_prim(t, k)
+
+    if e["style"] == "template":
+        tpl = e["template"]
+        Ws, Hs = PAPER_SIZES_MM.get(tpl.get("paper", e["paper"]), (W, H))
+        m = float(e["margin"])
+        kx = (W - 2 * m) / max(Ws - 2 * m, 1e-9)
+        dy = Hs / 2 - H / 2
+        placed: list[dict] = []
+        for te in tpl["entities"]:
+            p = dict(te)
+            p.update(base)
+            p["ly"] = te.get("ly", e["ly"])
+            p["lc"] = te.get("lc", 2); p["lt"] = te.get("lt", 1)
+            # stretch horizontally about the centre, keep the distance from the bottom edge
+            for kx_key, ky_key in (("x1", "y1"), ("x2", "y2"), ("cx", "cy"), ("x", "y")):
+                if kx_key in p:
+                    p[kx_key] = p[kx_key] * kx
+                    p[ky_key] = p[ky_key] + dy
+            if "points" in p:
+                p["points"] = [[q[0] * kx, q[1] + dy] for q in p["points"]]
+            if p["type"] in ("circle", "arc"):
+                p["r"] = p["r"] * kx
+            p["frame"] = True
+            placed.append(p)
+            yield rescale_prim(p, k)
+        # field values: find the cells (full-height vertical lines) and the label inside each
+        fields = e["fields"]
+        if fields:
+            from .profiles import label_key
+            lines = [p for p in placed if p["type"] == "line"]
+            if lines:
+                ys = [v for p in lines for v in (p["y1"], p["y2"])]
+                yb, yt = min(ys), max(ys)
+                hh = yt - yb
+                vx = sorted({round(p["x1"], 3) for p in lines if abs(p["x1"] - p["x2"]) < 1e-6 and abs(abs(p["y2"] - p["y1"]) - hh) < 0.5})
+                labels = [p for p in placed if p["type"] == "text" and label_key(p["text"])]
+                hdr = min((p["y"] for p in labels), default=yt - 3.0)
+                cy = yb + (hdr - yb) / 2
+                for lp in labels:
+                    key = label_key(lp["text"])
+                    val = fields.get(key)
+                    if not val:
+                        continue
+                    left = max([x for x in vx if x <= lp["x"] + 0.01], default=vx[0] if vx else -W / 2 + m)
+                    right = min([x for x in vx if x > lp["x"] + 0.01], default=W / 2 - m)
+                    hgt = float(e["title_height"]) if key == "title" else float(e["value_height"])
+                    if key == "note":
+                        yield T(left + 3.0, cy - hgt / 2, val, hgt, e["lc_value"])
+                    else:
+                        yield T((left + right) / 2, cy - hgt / 2, val, hgt, e["lc_value"], align="center")
+                comp = fields.get("company") or fields.get("logo")
+                if comp and len(vx) >= 2 and not any(label_key(p["text"]) == "company" for p in labels):
+                    right_edge = vx[-1]
+                    inner = [x for x in vx if x < right_edge - 1e-6]
+                    left_edge = inner[-1] if inner else right_edge - 60.0
+                    yield T((left_edge + right_edge) / 2, cy - float(e["value_height"]) / 2, comp, float(e["value_height"]), e["lc_value"], align="center")
+        return
+
+    m, bot, h = float(e["margin"]), float(e["bottom"]), float(e["height"])
+    x0, x1 = -W / 2 + m, W / 2 - m
+    y0 = -H / 2 + bot
+    y1 = y0 + h
+    hdr = y1 - float(e["header"])
+    cols = e["columns"]
+    fixed = float(cols["no"]) + float(cols["drawing"]) + float(cols["scale"]) + float(cols["logo"])
+    rest = max((x1 - x0) - fixed, 40.0)
+    w_title = rest * float(cols.get("title_ratio", 0.44))
+    w_note = rest - w_title
+    xs = [x0]
+    for w in (float(cols["no"]), w_title, float(cols["drawing"]), float(cols["scale"]), w_note):
+        xs.append(xs[-1] + w)
+    xs.append(x1)   # logo cell right edge
+    lc_o, lc_d, lc_l, lc_v, lc_g = e["lc_outer"], e["lc_div"], e["lc_label"], e["lc_value"], e["lc_guide"]
+
+    if e["border"]:
+        bm = float(e["border_margin"])
+        bx0, bx1, by0, by1 = -W / 2 + bm, W / 2 - bm, -H / 2 + bm, H / 2 - bm
+        for a, b in (((bx0, by0), (bx1, by0)), ((bx1, by0), (bx1, by1)), ((bx1, by1), (bx0, by1)), ((bx0, by1), (bx0, by0))):
+            yield L(a[0], a[1], b[0], b[1], lc_o)
+    # outer strip
+    for a, b in (((x0, y0), (x1, y0)), ((x1, y0), (x1, y1)), ((x1, y1), (x0, y1)), ((x0, y1), (x0, y0))):
+        yield L(a[0], a[1], b[0], b[1], lc_o)
+    # dividers
+    for i in range(1, 6):
+        yield L(xs[i], y0, xs[i], y1, lc_d if i < 5 else 4)
+    # header guide line (補助線) and note cell lines
+    yield L(x0, hdr, xs[5], hdr, lc_g, 9)
+    yield L(xs[4], hdr, xs[5], hdr, lc_l)
+    yield L(xs[4], y0 + h / 2 - float(e["header"]) / 2 + 0.5, xs[5], y0 + h / 2 - float(e["header"]) / 2 + 0.5, lc_l)
+    # labels
+    labels = e["labels"]
+    keys = ["no", "title", "drawing", "scale", "note"]
+    lh = float(e["label_height"])
+    for i, key in enumerate(keys):
+        yield T(xs[i] + 3.0, hdr + 0.6, labels.get(key, key), lh, lc_l, cn=1)
+    # values
+    fields = e["fields"]
+    vh = float(e["value_height"]); th = float(e["title_height"])
+    cy = y0 + (hdr - y0) / 2
+    for i, key in enumerate(keys):
+        val = fields.get(key)
+        if not val:
+            continue
+        hh = th if key == "title" else vh
+        cx = (xs[i] + xs[i + 1]) / 2
+        if key == "note":
+            yield T(xs[i] + 3.0, cy - hh / 2, val, hh, lc_v)
+        else:
+            yield T(cx, cy - hh / 2, val, hh, lc_v, align="center")
+    logo = e.get("logo_text") or fields.get("logo") or fields.get("company")
+    if logo:
+        yield T((xs[5] + xs[6]) / 2, cy - vh / 2, logo, vh, lc_v, align="center")
 
 
 # ---- wall -------------------------------------------------------------------

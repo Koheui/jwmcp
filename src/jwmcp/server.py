@@ -9,8 +9,10 @@ from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from . import __version__, bridge, jwc_temp, jww_read, scan
+from . import __version__, bridge, jwc_temp, jww_read, profiles, scan
 from .dxf_out import write_dxf
+from .jwf import parse_jwf
+from .jwf import summary as jwf_summary
 from .model import Drawing, ModelError, jwmcp_home, normalize_entity
 from .presets import PRESETS, preset_names
 from .render import render
@@ -102,11 +104,13 @@ def jww_texts(path: str, lg: int | None = None, pattern: str | None = None, limi
 def jww_preview(path: str, bbox: list[float] | None = None, lg: int | None = None, width_px: int = 1600,
                 out_png: str | None = None, show_text: bool = True) -> list[Any]:
     f = jww_read.load(path)
-    ents = [e for e in f.entities if lg is None or e["lg"] == lg]
+    ms = f.main_scale
+    ents = [e for e in f.unified_entities(ms) if lg is None or e["lg"] == lg]
     ents = [e for e in ents if not e.get("temporary")]
     out = out_png or str(_scratch(f"{Path(path).stem}_{int(time.time())}.png"))
-    info = render(ents, out, scale_for=f.scale_of, bbox=bbox, width_px=min(width_px, 4000),
+    info = render(ents, out, scale_for=lambda e: ms, bbox=bbox, width_px=min(width_px, 4000),
                   palette=(f.header.get("palette") or {}).get("pen_colors"), show_text=show_text)
+    info["main_scale"] = ms
     return [Image(path=out), info]
 
 
@@ -121,11 +125,17 @@ def jww_to_dxf(path: str, out: str | None = None, version: str = "AC1024") -> di
 # ---------------------------------------------------------------------------
 
 @app.tool(description="Create (or reset) a named drawing. scale = denominator of the drawing scale (100 for 1/100). "
-                      "paper: A0..A4, 2A..5A, 10m/50m/100m. group_names/layer_names set Jw_cad レイヤグループ名/レイヤ名 "
-                      "(e.g. group_names={'0':'平面図'}, layer_names={'0-1':'壁','0-2':'柱'}).")
-def drawing_new(name: str, scale: float = 100, paper: str = "A3", description: str = "", preset: str | None = None,
-                group_names: dict[str, str] | None = None, layer_names: dict[str, str] | None = None,
-                group_scales: dict[str, float] | None = None) -> dict:
+                      "paper: A0..A4, 2A..5A, 10m/50m/100m. profile = a saved company profile (profile_list) that supplies "
+                      "group/layer names, scales, per-type defaults and the title-block frame; frame=true adds the frame "
+                      "(fields = title/no/drawing/scale/note values). preset = built-in layer preset (presets_list). "
+                      "group_names/layer_names/group_scales override (e.g. group_names={'0':'平面図'}, layer_names={'0-1':'壁'}).")
+def drawing_new(name: str, scale: float | None = None, paper: str | None = None, description: str = "",
+                profile: str | None = None, frame: bool = False, fields: dict[str, str] | None = None,
+                preset: str | None = None, group_names: dict[str, str] | None = None,
+                layer_names: dict[str, str] | None = None, group_scales: dict[str, float] | None = None) -> dict:
+    prof = profiles.load_profile(profile) if profile else None
+    scale = scale or (prof or {}).get("scale") or 100
+    paper = paper or (prof or {}).get("paper") or "A3"
     d = Drawing(name, scale=scale, paper=paper, description=description)
     if preset:
         if preset not in PRESETS:
@@ -139,10 +149,104 @@ def drawing_new(name: str, scale: float = 100, paper: str = "A3", description: s
         d.group_names[int(str(k), 16)] = v
     for k, v in (layer_names or {}).items():
         g, l = str(k).split("-"); d.layer_names[f"{int(g,16):X}-{int(l,16):X}"] = v
+    if prof:
+        profiles.apply_to_drawing(prof, d)
+    for k, v in (group_names or {}).items():
+        d.group_names[int(str(k), 16)] = v
+    for k, v in (layer_names or {}).items():
+        g, l = str(k).split("-"); d.layer_names[f"{int(g,16):X}-{int(l,16):X}"] = v
     for k, v in (group_scales or {}).items():
         d.group_scales[int(str(k), 16)] = float(v)
+    if frame:
+        fe = profiles.frame_entity(prof or {"frame": {"lg": "F", "style": "strip"}}, d.paper, fields)
+        d.group_scales[int(fe["lg"])] = 1.0
+        d.group_names.setdefault(int(fe["lg"]), "図面枠")
+        d.add([fe])
     d.save()
     return d.summary()
+
+
+@app.tool(description="Add (or replace) the title-block frame (図面枠) of a drawing at S=1:1 in its own layer group. "
+                      "Uses the drawing's profile frame settings (or the built-in strip). fields: no/title/drawing/scale/note/company. "
+                      "paper defaults to the drawing's paper.")
+def drawing_frame(name: str, fields: dict[str, str] | None = None, paper: str | None = None, lg: str | None = None,
+                  border: bool | None = None) -> dict:
+    d = Drawing.load(name)
+    prof = profiles.load_profile(d.profile) if d.profile else {"frame": {"lg": "F", "style": "strip"}}
+    fe = profiles.frame_entity(prof, paper or d.paper, fields, lg)
+    if border is not None:
+        fe["border"] = border
+    d.entities = [e for e in d.entities if e["type"] != "frame"]
+    d.group_scales[int(fe["lg"])] = 1.0
+    d.group_names.setdefault(int(fe["lg"]), "図面枠")
+    ids = d.add([fe])
+    d.save()
+    return {"frame_id": ids[0], "lg": f"{int(fe['lg']):X}", "paper": fe["paper"], "style": fe["style"], "fields": fe["fields"]}
+
+
+# ---------------------------------------------------------------------------
+# Profiles (company settings: layer groups / layers / scales / pens / text types / frame)
+# ---------------------------------------------------------------------------
+
+@app.tool(description="List saved company profiles (layer groups, layer names, scales, pen colours, text types, frame).")
+def profile_list() -> dict:
+    return {"profiles": profiles.list_profiles(), "dir": str(profiles.profile_dir())}
+
+
+@app.tool(description="Show one profile in full.")
+def profile_show(name: str) -> dict:
+    p = profiles.load_profile(name)
+    if "frame_template" in p:
+        p = {**p, "frame_template": {**p["frame_template"], "entities": f"<{len(p['frame_template']['entities'])} entities>"}}
+    return p
+
+
+@app.tool(description="Create or update a profile. Keys: company, description, paper, scale, group_names {'0':'図面枠'}, "
+                      "group_scales {'F':1}, layer_names {'1-0':'通り芯'}, defaults {'wall':{'lg':1,'ly':1,'lc':2}}, "
+                      "pipe_layers {'給水':[2,0]}, frame {lg,style,fields,margin,bottom,height,border,...}, base_preset (start from a preset).")
+def profile_set(name: str, company: str | None = None, description: str | None = None, paper: str | None = None,
+                scale: float | None = None, group_names: dict[str, str] | None = None, group_scales: dict[str, float] | None = None,
+                layer_names: dict[str, str] | None = None, defaults: dict[str, dict] | None = None,
+                pipe_layers: dict[str, list[int]] | None = None, frame: dict | None = None, base_preset: str | None = None) -> dict:
+    try:
+        return profiles.update_profile(name, company=company, description=description, paper=paper, scale=scale,
+                                       group_names=group_names, group_scales=group_scales, layer_names=layer_names,
+                                       defaults=defaults, pipe_layers=pipe_layers, frame=frame, base_preset=base_preset)
+    except ModelError as exc:
+        return {"error": str(exc)}
+
+
+@app.tool(description="Read a Jw_cad environment file (.jwf / jw_win.jwf): paper, pen colours, printer widths, 文字種 sizes, font, "
+                      "default group scales, layer names.")
+def jwf_read(path: str) -> dict:
+    return jwf_summary(parse_jwf(path))
+
+
+@app.tool(description="Create/update a profile from a .jwf (pen colours, 文字種, font, default group scales, layer names).")
+def profile_from_jwf(path: str, name: str) -> dict:
+    base = None
+    try:
+        base = profiles.load_profile(name)
+    except ModelError:
+        pass
+    p = profiles.from_jwf(path, name, base)
+    return {"profile": name, "text_types": p.get("text_types"), "pen_colors": p.get("pen_colors"), "font": p.get("font"),
+            "group_scales": p.get("group_scales"), "layer_names": p.get("layer_names")}
+
+
+@app.tool(description="Create/update a profile from an existing .jww: learns layer-group scales/names and layer names; "
+                      "frame_lg captures that group as the title-block template (converted to paper mm, reusable at S=1:1 on any paper).")
+def profile_from_jww(path: str, name: str, frame_lg: int | None = None) -> dict:
+    base = None
+    try:
+        base = profiles.load_profile(name)
+    except ModelError:
+        pass
+    p = profiles.from_jww(path, name, base, frame_lg=frame_lg)
+    out = {"profile": name, "group_scales": p.get("group_scales"), "group_names": p.get("group_names"), "layer_names": p.get("layer_names")}
+    if "frame_template" in p:
+        out["frame_template"] = {k: v for k, v in p["frame_template"].items() if k != "entities"} | {"entities": len(p["frame_template"]["entities"])}
+    return out
 
 
 @app.tool(description="List saved drawings.")
@@ -291,11 +395,20 @@ def drawing_layers(name: str, group_names: dict[str, str] | None = None, layer_n
     return d.summary()
 
 
-@app.tool(description="Render a drawing to PNG and return the image (bbox in real mm to zoom).", structured_output=False)
-def drawing_preview(name: str, bbox: list[float] | None = None, width_px: int = 1600, out_png: str | None = None) -> list[Any]:
+@app.tool(description="Render a drawing to PNG and return the image (bbox in real mm to zoom). The paper outline is drawn "
+                      "as a grey dotted rectangle so you can judge the layout on the sheet.", structured_output=False)
+def drawing_preview(name: str, bbox: list[float] | None = None, width_px: int = 1600, out_png: str | None = None,
+                    paper_outline: bool = True) -> list[Any]:
     d = Drawing.load(name)
     out = out_png or str(_scratch(f"{name}_{int(time.time())}.png"))
-    info = render(d.entities, out, scale_for=d.scale_of, bbox=bbox, width_px=min(width_px, 4000))
+    ents = d.unified_entities()
+    if paper_outline:
+        from .model import PAPER_SIZES_MM
+        W, H = PAPER_SIZES_MM[d.paper]
+        k = d.main_scale
+        ents = [{"type": "rect", "x": -W / 2 * k, "y": -H / 2 * k, "w": W * k, "h": H * k, "lg": 0, "ly": 0, "lc": 9, "lt": 3}] + ents
+    info = render(ents, out, scale_for=d.scale_for_unified, bbox=bbox, width_px=min(width_px, 4000))
+    info["paper"] = d.paper; info["main_scale"] = d.main_scale
     return [Image(path=out), info]
 
 
@@ -307,7 +420,8 @@ def drawing_export(name: str, format: str = "dxf", out: str | None = None) -> di
     outdir = jwmcp_home() / "exports"; outdir.mkdir(exist_ok=True)
     if fmt == "dxf":
         out = out or str(outdir / f"{name}.dxf")
-        return write_dxf(d.entities, out, scale_for=d.scale_of, layer_names=d.layer_names)
+        return {**write_dxf(d.unified_entities(), out, scale_for=d.scale_for_unified, layer_names=d.layer_names),
+                "model_space": f"real mm at 1/{d.main_scale:g}; other layer groups (e.g. the 1:1 frame) are rescaled to fit"}
     if fmt in ("jwc_temp", "jwc", "gaihen"):
         out = out or str(outdir / f"{name}_jwc_temp.txt")
         text = jwc_temp.serialize(d.entities, scale_for=d.scale_of, group_names=d.group_names, layer_names=d.layer_names)
@@ -398,10 +512,12 @@ def gaihen_respond(job_id: str, entities: list[dict] | None = None, drawing: str
                                      "lc": j.write.get("lc", 1), "lt": j.write.get("lt", 1)}) for e in (entities or [])]
     try:
         text = jwc_temp.serialize(ents, scale_for=scale_for, delete_selected=delete_selected, notice=notice,
-                                  group_names=group_names, layer_names=layer_names)
+                                  group_names=group_names, layer_names=layer_names,
+                                  offset_for=bridge.response_offset_for(j))
     except ModelError as exc:
         return {"error": str(exc)}
-    return {**bridge.respond(ex, job_id, text), "entities": len(ents), "deleted_selection": delete_selected}
+    return {**bridge.respond(ex, job_id, text), "entities": len(ents), "deleted_selection": delete_selected,
+            "coordinates": "drawing origin → converted back to the job's base point" if bridge.response_offset_for(j) else "as given"}
 
 
 @app.tool(description="Cancel a job: Jw_cad reports 未実行 and changes nothing.")
@@ -435,7 +551,7 @@ def jwc_temp_parse(path: str, limit: int = 500, offset: int = 0) -> dict:
 def gaihen_preview(job_id: str, exchange: str | None = None, width_px: int = 1400) -> list[Any]:
     j = bridge.read_job(Path(exchange) if exchange else None, job_id)
     out = str(_scratch(f"job_{job_id}.png"))
-    info = render(j.entities, out, scale_for=lambda e: 1.0, width_px=width_px)
+    info = render(j.entities, out, scale_for=lambda e: j.hs[int(e.get("lg", 0))], width_px=width_px)
     return [Image(path=out), info]
 
 
