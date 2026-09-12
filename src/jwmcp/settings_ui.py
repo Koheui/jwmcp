@@ -103,13 +103,14 @@ async def profile_import_jww(req: Request):
         return _err("file or path required")
     frame_lg = form.get("frame_lg")
     frame_lg = int(str(frame_lg), 16) if frame_lg not in (None, "", "none") else None
+    frame_texts = str(form.get("frame_texts") or "all")
     base = None
     try:
         base = profiles.load_profile(name)
     except ModelError:
         pass
     try:
-        p = profiles.from_jww(src, name, base, frame_lg=frame_lg)
+        p = profiles.from_jww(src, name, base, frame_lg=frame_lg, frame_texts=frame_texts)
     except Exception as exc:
         return _err(f"jww import failed: {exc}")
     return _ok(p)
@@ -301,7 +302,9 @@ details summary{cursor:pointer;color:var(--mute)}
  <h3>手持ちのファイルから取り込む</h3>
  <div class="row"><div class="drop" id="dropJwf" style="flex:1">jw_win.jwf（環境設定）をここへドロップ → 線色・印刷線幅・文字種・既定縮尺</div>
  <div class="drop" id="dropJww" style="flex:1">テンプレートの .jww をここへドロップ → レイヤ構成 ＋ 図面枠<br>
-  <label class="hint">図面枠のグループ <select id="frameLgSel"><option value="none">（枠は取り込まない）</option></select></label></div></div>
+  <label class="hint">図面枠のグループ <select id="frameLgSel"><option value="none">（枠は取り込まない）</option></select></label>
+  <label class="hint">文字 <select id="frameTextsSel"><option value="all">すべて残す（会社名など固定文字も）</option><option value="labels">ラベル（No./Title…）だけ残す</option></select></label></div></div>
+ <p class="hint">Jw_cad で描いた枠をそのまま保存するなら: Jw_cad で枠を範囲選択 → 外部変形 JWMCP_send.bat → AI に「このジョブを図面枠として保存して」（profile_frame_from_job）。値の欄は空、会社名などの固定文字は欲しい大きさで描いておく。</p>
  <div class="row"><label>プリセットから初期化 <select id="presetSel"></select></label><button id="applyPreset">レイヤ構成と既定を読み込む</button>
  <span class="hint">既存の設定に上書き追加します</span></div>
 </section>
@@ -318,7 +321,11 @@ details summary{cursor:pointer;color:var(--mute)}
  <label>左右余白 <input type="number" id="frMargin" step="0.5"></label><label>下端から <input type="number" id="frBottom" step="0.5"></label>
  <label>高さ <input type="number" id="frHeight" step="0.5"></label><label><input type="checkbox" id="frBorder"> 用紙外枠も描く</label></div>
  <div class="row"><label>会社名（ロゴ欄） <input type="text" id="frCompany" style="width:220px"></label>
- <span id="frTplInfo" class="hint"></span></div>
+ <label>会社名の文字高さ mm <input type="number" id="frCompanyH" step="0.5"></label>
+ <label>タイトルの文字高さ mm <input type="number" id="frTitleH" step="0.5"></label>
+ <label>値の文字高さ mm <input type="number" id="frValueH" step="0.5"></label>
+ <label>ラベルの文字高さ mm <input type="number" id="frLabelH" step="0.5"></label></div>
+ <div class="row"><span id="frTplInfo" class="hint"></span></div>
  <div class="row"><label>プレビュー用紙 <select id="frPaper"></select></label><label>縮尺 1/ <input type="number" id="frScale" value="50"></label><button id="frPrev">プレビュー更新</button>
  <span class="hint">保存してからプレビューが反映されます</span></div>
  <img class="prev" id="frImg" alt=""></section>
@@ -378,6 +385,7 @@ function fill(){$('#company').value=P.company||'';$('#desc').value=P.description
   tb.insertAdjacentHTML('beforeend',`<tr><td>${label}<span class="chip">${k}</span></td><td>${selLG(k+'.lg',d.lg)}</td><td>${selLY(k+'.ly',d.ly)}</td><td>${selLC(k+'.lc',d.lc)}</td><td>${selLT(k+'.lt',d.lt)}</td><td class="hint">${extra}</td></tr>`)});
  const pb=$('#pipeTable tbody');pb.innerHTML='';PIPES.forEach(s=>{const v=(P.pipe_layers||{})[s]||[];pb.insertAdjacentHTML('beforeend',`<tr><td>${s}</td><td><select data-p="${s}.0"><option value="">（指定なし）</option>${HEX.map(h=>`<option value="${h}" ${v[0]!==undefined&&Number(v[0]).toString(16).toUpperCase()===h?'selected':''}>${h}</option>`).join('')}</select></td><td><select data-p="${s}.1"><option value="">（指定なし）</option>${HEX.map((h,i)=>`<option value="${i}" ${String(v[1])===String(i)?'selected':''}>${h}</option>`).join('')}</select></td></tr>`)});
  const f=P.frame||{};$('#frStyle').value=f.style||'strip';$('#frLg').value=f.lg??'F';$('#frMargin').value=f.margin??16;$('#frBottom').value=f.bottom??11.5;$('#frHeight').value=f.height??19;$('#frBorder').checked=!!f.border;$('#frCompany').value=(f.fields||{}).company||'';
+ $('#frCompanyH').value=f.company_height??5;$('#frTitleH').value=f.title_height??3;$('#frValueH').value=f.value_height??2.5;$('#frLabelH').value=f.label_height??2;
  $('#frTplInfo').textContent=P.frame_template?`テンプレート取込済: ${P.frame_template.paper} から ${P.frame_template.entities.length} 要素（元グループ ${P.frame_template.source_lg}, 1/${P.frame_template.source_scale}）`:'テンプレート未取込（基本タブで .jww をドロップ）';
  const pt=$('#penTable tbody');pt.innerHTML='';const DEF={1:[0,192,192],2:[0,0,0],3:[0,192,0],4:[192,192,0],5:[192,0,192],6:[0,0,255],7:[192,192,192],8:[255,0,128],9:[192,192,192]};
  for(let n=1;n<=9;n++){const rgb=((P.pen_colors||{})[n])||DEF[n];const hex='#'+rgb.map(v=>v.toString(16).padStart(2,'0')).join('');const pw=((P.print_colors||{})[n]||{}).width_mm??'';pt.insertAdjacentHTML('beforeend',`<tr><td>${n}</td><td><input type="color" data-pen="${n}" value="${hex}"></td><td class="hint">${rgb.join(',')}</td><td><input type="number" step="0.01" data-pw="${n}" value="${pw}"></td></tr>`)}
@@ -388,7 +396,9 @@ function collect(){const o={...P};o.company=$('#company').value;o.description=$(
  const {gn,gs,ln}=readLayerEditor($('#layerEditor'));o.group_names=gn;o.group_scales=gs;o.layer_names=ln;
  const defs={};$$('[data-d]').forEach(i=>{const [t,k]=i.dataset.d.split('.');const v=i.type==='checkbox'?i.checked:i.value;if(v===''||v===false||v==null)return;defs[t]=defs[t]||{};defs[t][k]=i.type==='checkbox'?true:(k==='lg'||k==='opening_lg')?parseInt(v,16):parseFloat(v)});o.defaults=defs;
  const pl={};$$('[data-p]').forEach(i=>{const [s,idx]=i.dataset.p.split('.');if(i.value==='')return;pl[s]=pl[s]||[0,0];pl[s][+idx]=idx==='0'?parseInt(i.value,16):parseInt(i.value)});o.pipe_layers=pl;
- o.frame={...(P.frame||{}),style:$('#frStyle').value,lg:$('#frLg').value||'F',margin:parseFloat($('#frMargin').value),bottom:parseFloat($('#frBottom').value),height:parseFloat($('#frHeight').value),border:$('#frBorder').checked,fields:{...((P.frame||{}).fields||{}),company:$('#frCompany').value||undefined}};
+ o.frame={...(P.frame||{}),style:$('#frStyle').value,lg:$('#frLg').value||'F',margin:parseFloat($('#frMargin').value),bottom:parseFloat($('#frBottom').value),height:parseFloat($('#frHeight').value),border:$('#frBorder').checked,
+  company_height:parseFloat($('#frCompanyH').value)||5,title_height:parseFloat($('#frTitleH').value)||3,value_height:parseFloat($('#frValueH').value)||2.5,label_height:parseFloat($('#frLabelH').value)||2,
+  fields:{...((P.frame||{}).fields||{}),company:$('#frCompany').value||undefined}};
  const pc={};$$('[data-pen]').forEach(i=>{const h=i.value;pc[i.dataset.pen]=[1,3,5].map(k=>parseInt(h.substr(k,2),16))});o.pen_colors=pc;
  const pr={...(P.print_colors||{})};$$('[data-pw]').forEach(i=>{if(i.value!==''){pr[i.dataset.pw]={...(pr[i.dataset.pw]||{}),width_mm:parseFloat(i.value)}}});o.print_colors=pr;
  const tt={};$$('[data-tt]').forEach(i=>{const [n,k]=i.dataset.tt.split('.');tt[n]=tt[n]||{};tt[n][k]=parseFloat(i.value)});o.text_types=tt;return o}
@@ -399,7 +409,7 @@ $('#delProf').onclick=async()=>{if(!confirm(`プロファイル ${P.name} を削
 $('#applyPreset').onclick=async()=>{try{await api('/api/profile/'+encodeURIComponent(P.name),{method:'PUT',body:JSON.stringify(collect())});P=await api('/api/profile/'+encodeURIComponent(P.name)+'/from_preset',{method:'POST',body:JSON.stringify({preset:$('#presetSel').value})});fill();toast('プリセットを反映しました')}catch(e){toast('エラー: '+e.message)}};
 function drop(el,handler){['dragenter','dragover'].forEach(ev=>el.addEventListener(ev,e=>{e.preventDefault();el.classList.add('hover')}));['dragleave','drop'].forEach(ev=>el.addEventListener(ev,e=>{e.preventDefault();el.classList.remove('hover')}));el.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)handler(f)});el.onclick=()=>{const i=document.createElement('input');i.type='file';i.onchange=()=>i.files[0]&&handler(i.files[0]);i.click()}}
 drop($('#dropJwf'),async f=>{try{await api('/api/profile/'+encodeURIComponent(P.name),{method:'PUT',body:JSON.stringify(collect())});const fd=new FormData();fd.append('file',f);P=await api('/api/profile/'+encodeURIComponent(P.name)+'/import_jwf',{method:'POST',body:fd});fill();toast('jwf を取り込みました')}catch(e){toast('エラー: '+e.message)}});
-drop($('#dropJww'),async f=>{try{await api('/api/profile/'+encodeURIComponent(P.name),{method:'PUT',body:JSON.stringify(collect())});const fd=new FormData();fd.append('file',f);fd.append('frame_lg',$('#frameLgSel').value);P=await api('/api/profile/'+encodeURIComponent(P.name)+'/import_jww',{method:'POST',body:fd});fill();toast('jww を取り込みました')}catch(e){toast('エラー: '+e.message)}});
+drop($('#dropJww'),async f=>{try{await api('/api/profile/'+encodeURIComponent(P.name),{method:'PUT',body:JSON.stringify(collect())});const fd=new FormData();fd.append('file',f);fd.append('frame_lg',$('#frameLgSel').value);fd.append('frame_texts',$('#frameTextsSel').value);P=await api('/api/profile/'+encodeURIComponent(P.name)+'/import_jww',{method:'POST',body:fd});fill();toast('jww を取り込みました')}catch(e){toast('エラー: '+e.message)}});
 $('#frPrev').onclick=()=>{$('#frImg').src=`/api/preview/frame/${encodeURIComponent(P.name)}?paper=${$('#frPaper').value}&scale=${$('#frScale').value}&t=${Date.now()}`};
 $('#jsonApply').onclick=()=>{try{P=JSON.parse($('#jsonArea').value);fill();toast('反映しました（保存で確定）')}catch(e){toast('JSON エラー: '+e.message)}};
 $('#drwLoad').onclick=async()=>{try{D=await api('/api/drawing/'+encodeURIComponent($('#drwSel').value));$('#drwPaper').value=D.paper;$('#drwScale').value=D.main_scale;$('#drwDesc').value=D.description||'';$('#drwInfo').textContent=`要素 ${D.entity_count} / プロファイル ${D.profile||'なし'}`;layerEditor($('#drwLayerEditor'),D.group_names_all,D.group_scales_all,D.layer_names);$('#drwImg').src=`/api/preview/drawing/${encodeURIComponent(D.name)}?t=${Date.now()}`}catch(e){toast('エラー: '+e.message)}};

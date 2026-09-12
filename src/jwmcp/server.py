@@ -234,15 +234,39 @@ def profile_from_jwf(path: str, name: str) -> dict:
             "group_scales": p.get("group_scales"), "layer_names": p.get("layer_names")}
 
 
-@app.tool(description="Create/update a profile from an existing .jww: learns layer-group scales/names and layer names; "
-                      "frame_lg captures that group as the title-block template (converted to paper mm, reusable at S=1:1 on any paper).")
-def profile_from_jww(path: str, name: str, frame_lg: int | None = None) -> dict:
+@app.tool(description="Capture the figures of a 外部変形 job (the title block the user selected in Jw_cad with JWMCP_send.bat) "
+                      "as the profile's frame template, then cancel the job so Jw_cad changes nothing. Draw the frame in Jw_cad with "
+                      "empty value cells and fixed texts (company name) at the wanted size; frame_texts='labels' keeps only "
+                      "No./Title/... labels. paper defaults to the job's paper size.")
+def profile_frame_from_job(job_id: str, name: str, paper: str | None = None, frame_texts: str = "all",
+                           exchange: str | None = None) -> dict:
+    ex = Path(exchange) if exchange else None
+    j = bridge.read_job(ex, job_id)
     base = None
     try:
         base = profiles.load_profile(name)
     except ModelError:
         pass
-    p = profiles.from_jww(path, name, base, frame_lg=frame_lg)
+    try:
+        p = profiles.frame_from_job(j, name, base, paper=paper, frame_texts=frame_texts)
+    except ModelError as exc:
+        return {"error": str(exc)}
+    bridge.cancel(ex, job_id, "図面枠をプロファイルに保存しました（図面は変更していません）")
+    tpl = p["frame_template"]
+    return {"profile": name, "frame_template": {k: v for k, v in tpl.items() if k != "entities"}, "job_cancelled": job_id,
+            "next": "設定画面の「図面枠」タブでプレビュー、drawing_new(frame=true) で使用"}
+
+
+@app.tool(description="Create/update a profile from an existing .jww: learns layer-group scales/names and layer names; "
+                      "frame_lg captures that group as the title-block template (converted to paper mm, reusable at S=1:1 on any paper). "
+                      "frame_texts: 'all' keeps every text of that group, 'labels' keeps only No./Title/Drawing/Scale/Note labels.")
+def profile_from_jww(path: str, name: str, frame_lg: int | None = None, frame_texts: str = "all") -> dict:
+    base = None
+    try:
+        base = profiles.load_profile(name)
+    except ModelError:
+        pass
+    p = profiles.from_jww(path, name, base, frame_lg=frame_lg, frame_texts=frame_texts)
     out = {"profile": name, "group_scales": p.get("group_scales"), "group_names": p.get("group_names"), "layer_names": p.get("layer_names")}
     if "frame_template" in p:
         out["frame_template"] = {k: v for k, v in p["frame_template"].items() if k != "entities"} | {"entities": len(p["frame_template"]["entities"])}

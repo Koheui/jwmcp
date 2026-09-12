@@ -126,6 +126,12 @@ C. **外部変形（取込）**: Antigravity で `gaihen_prepare_import` に `dr
 
 D. **設定画面**: `<SHARE>\jwmcp\scripts\windows\settings.bat` を実行 → ブラウザで http://127.0.0.1:8765 が開き、プロファイル `futurestudio` が表示されること。
 
+E. **図面枠を Jw_cad で作って保存する**（任意）
+   1. Jw_cad で A3 の新規図面（縮尺は何でもよい）に表題欄を描く。値の欄（物件名など）は空にし、会社名など固定で出したい文字は欲しい大きさで描く。ラベルは「No. / Title / Drawing / Scale / Note」（日本語なら 図番 / 工事名 / 図面名 / 縮尺 / 備考）と書く
+   2. 描いた枠を範囲選択 → 外部変形 → `JWMCP_send.bat`
+   3. Antigravity で `gaihen_jobs` → そのジョブ ID を `profile_frame_from_job(job_id, name="futurestudio")` に渡す。図面枠がプロファイルに保存され、Jw_cad 側は「未実行」で戻る（図面は変わらない）
+   4. `drawing_new(profile="futurestudio", frame=true, fields={"title":"..."})` で新しい枠が出ることを確認
+
 ---
 
 ## 報告（この形式で返す）

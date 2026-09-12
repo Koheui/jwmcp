@@ -161,8 +161,32 @@ def from_jwf(path: str, name: str, base: dict | None = None) -> dict:
     return prof
 
 
+def build_frame_template(entities: list[dict], scale_for, paper: str, *, frame_texts: str = "all",
+                         source: str = "") -> dict:
+    """Turn real-mm entities (a title block drawn in Jw_cad) into a paper-mm frame template.
+
+    frame_texts: "all" keeps every text (draw the template with empty value cells and any fixed text such
+    as the company name at the size you want); "labels" keeps only No./Title/Drawing/Scale/Note style labels.
+    Embedded image references (^@BM...) are always dropped.
+    """
+    ents = []
+    for e in entities:
+        if e.get("temporary") or e.get("type") in ("block", "solid_circle"):
+            continue
+        if e["type"] == "text":
+            txt = e.get("text", "")
+            if txt.startswith("^@"):
+                continue
+            if frame_texts == "labels" and not _is_label(txt):
+                continue
+        ents.append(_to_paper(e, scale_for(e)))
+    if not ents:
+        raise ModelError("no frame entities found")
+    return {"paper": paper, "entities": ents, "source": source, "texts": frame_texts, "count": len(ents)}
+
+
 def from_jww(path: str, name: str, base: dict | None = None, frame_lg: int | None = None,
-             keep_default_names: bool = False) -> dict:
+             keep_default_names: bool = False, frame_texts: str = "all") -> dict:
     """Learn layer-group scales / names and layer names from a .jww; optionally capture the group
     `frame_lg` as a title-block template (converted to paper mm so it can be re-used at S=1:1)."""
     from .jww_read import load
@@ -181,23 +205,36 @@ def from_jww(path: str, name: str, base: dict | None = None, frame_lg: int | Non
         if nm and (keep_default_names or not re.fullmatch(r"[0-9A-F]-[0-9A-F]", nm)):
             ln[key] = nm
     if frame_lg is not None:
-        sc = f.group_scales.get(frame_lg, 1.0)
-        ents = []
-        for e in f.entities:
-            if e["lg"] != frame_lg or e.get("temporary"):
-                continue
-            if e["type"] == "text":
-                txt = e.get("text", "")
-                if txt.startswith("^@"):          # embedded image reference (^@BM...) - not reusable
-                    continue
-                if not _is_label(txt):           # field values of the source drawing are dropped
-                    continue
-            ents.append(_to_paper(e, sc))
         from .model import PAPER_BY_CODE
         paper = PAPER_BY_CODE.get(int(f.header.get("paper_size", 3)), "A3")
-        prof["frame_template"] = {"paper": paper, "source_lg": f"{frame_lg:X}", "source_scale": sc, "entities": ents}
+        sel = [e for e in f.entities if e["lg"] == frame_lg]
+        tpl = build_frame_template(sel, f.scale_of, paper, frame_texts=frame_texts, source=str(Path(path).expanduser()))
+        tpl["source_lg"] = f"{frame_lg:X}"; tpl["source_scale"] = f.group_scales.get(frame_lg, 1.0)
+        prof["frame_template"] = tpl
         prof.setdefault("frame", {"lg": "F", "style": "template"})
+        prof["frame"]["style"] = "template"
     prof.setdefault("sources", {})["jww"] = str(Path(path).expanduser())
+    save_profile(prof)
+    return prof
+
+
+def frame_from_job(job, name: str, base: dict | None = None, paper: str | None = None,
+                   frame_texts: str = "all") -> dict:
+    """Capture the entities of a 外部変形 job (the frame selected in Jw_cad) as the profile's frame template."""
+    prof = dict(base or {})
+    prof["name"] = name
+    if not paper:
+        if job.hzs:
+            w, h = job.hzs
+            for p, (pw, ph) in PAPER_SIZES_MM.items():
+                if abs(pw - w) < 2 and abs(ph - h) < 2:
+                    paper = p; break
+        paper = paper or prof.get("paper") or "A3"
+    tpl = build_frame_template(job.entities, lambda e: job.hs[int(e.get("lg", 0))], paper,
+                               frame_texts=frame_texts, source=f"外部変形 job ({job.file or 'Jw_cad'})")
+    prof["frame_template"] = tpl
+    prof.setdefault("frame", {"lg": "F", "style": "template"})
+    prof["frame"]["style"] = "template"
     save_profile(prof)
     return prof
 
@@ -255,7 +292,7 @@ def frame_entity(prof: dict, paper: str, fields: dict | None = None, lg: str | i
     ent = {"type": "frame", "paper": paper, "lg": g, "ly": int(fr.get("ly", 0)),
            "style": fr.get("style", "strip"), "fields": dict(fr.get("fields", {}))}
     for k in ("margin", "bottom", "height", "border", "border_margin", "labels", "lc_outer", "lc_div", "lc_label",
-              "lc_value", "title_height", "value_height", "logo_text", "columns"):
+              "lc_value", "label_height", "title_height", "value_height", "company_height", "logo_text", "columns"):
         if k in fr:
             ent[k] = fr[k]
     if fields:

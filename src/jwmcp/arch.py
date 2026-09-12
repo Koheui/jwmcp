@@ -29,7 +29,7 @@ FRAME_DEFAULTS = {
     "columns": {"no": 19.0, "drawing": 41.0, "scale": 41.0, "logo": 77.0, "title_ratio": 0.44},
     "labels": {"no": "No.", "title": "Title", "drawing": "Drawing", "scale": "Scale", "note": "Note"},
     "lc_outer": 5, "lc_div": 3, "lc_label": 1, "lc_value": 2, "lc_guide": 9,
-    "label_height": 2.0, "title_height": 3.0, "value_height": 2.5,
+    "label_height": 2.0, "title_height": 3.0, "value_height": 2.5, "company_height": 5.0,
     "border": False, "border_margin": 10.0,
 }
 
@@ -302,7 +302,8 @@ def _frame(e: dict, scale: float) -> Iterable[dict]:
                     right_edge = vx[-1]
                     inner = [x for x in vx if x < right_edge - 1e-6]
                     left_edge = inner[-1] if inner else right_edge - 60.0
-                    yield T((left_edge + right_edge) / 2, cy - float(e["value_height"]) / 2, comp, float(e["value_height"]), e["lc_value"], align="center")
+                    ch = float(e.get("company_height", 5.0))
+                    yield T((left_edge + right_edge) / 2, (yb + yt) / 2 - ch / 2, comp, ch, e["lc_value"], align="center")
         return
 
     m, bot, h = float(e["margin"]), float(e["bottom"]), float(e["height"])
@@ -358,7 +359,8 @@ def _frame(e: dict, scale: float) -> Iterable[dict]:
             yield T(cx, cy - hh / 2, val, hh, lc_v, align="center")
     logo = e.get("logo_text") or fields.get("logo") or fields.get("company")
     if logo:
-        yield T((xs[5] + xs[6]) / 2, cy - vh / 2, logo, vh, lc_v, align="center")
+        ch = float(e.get("company_height", 5.0))
+        yield T((xs[5] + xs[6]) / 2, (y0 + y1) / 2 - ch / 2, logo, ch, lc_v, align="center")
 
 
 # ---- wall -------------------------------------------------------------------
