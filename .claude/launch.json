@@ -4,8 +4,8 @@
     {
       "name": "jwmcp-settings",
       "runtimeExecutable": "/Volumes/T5_Data/JW MCP/.venv/bin/python",
-      "runtimeArgs": ["-m", "jwmcp", "settings", "--no-browser", "--port", "8765"],
-      "port": 8765
+      "runtimeArgs": ["-m", "jwmcp", "settings", "--no-browser", "--port", "8791"],
+      "port": 8791
     }
   ]
 }

@@ -309,12 +309,12 @@ details summary{cursor:pointer;color:var(--mute)}
  <p class="hint">グループ名・縮尺（1/N）・レイヤ名。図面枠のグループは縮尺 1 にします。空欄は Jw_cad の既定のままです。</p>
  <div id="layerEditor"></div></section>
 <section id="t-defaults"><h2>部品の既定レイヤ・線色</h2>
- <p class="hint">Claude が壁・柱・通り芯などを置くときの既定値。図面側や指示で上書きできます。lc: 1水色 2黒 3緑 4黄 5紫 6青 7深緑 8赤 9補助</p>
- <table id="defTable"><thead><tr><th>部品</th><th>lg</th><th>ly</th><th>lc</th><th>lt</th><th>その他</th></tr></thead><tbody></tbody></table>
- <h3>配管系統 → グループ/レイヤ</h3><table id="pipeTable"><thead><tr><th>系統</th><th>lg</th><th>ly</th></tr></thead><tbody></tbody></table></section>
+ <p class="hint">AI が壁・柱・通り芯などを置くときの既定値（Jw_cad のレイヤグループ 0〜F、レイヤ 0〜F、線色 1〜9、線種 1〜9）。空欄は「指定なし」。図面側や指示で上書きできます。</p>
+ <table id="defTable"><thead><tr><th>部品</th><th>グループ</th><th>レイヤ</th><th>線色</th><th>線種</th><th>その他</th></tr></thead><tbody></tbody></table>
+ <h3>配管系統 → グループ / レイヤ</h3><table id="pipeTable"><thead><tr><th>系統</th><th>グループ</th><th>レイヤ</th></tr></thead><tbody></tbody></table></section>
 <section id="t-frame"><h2>図面枠（S=1:1 のグループに配置）</h2>
  <div class="row"><label>方式 <select id="frStyle"><option value="strip">内蔵の表題帯</option><option value="template">テンプレート（.jww から取込）</option></select></label>
- <label>配置グループ <input type="text" id="frLg" style="width:40px"></label>
+ <label>配置グループ（縮尺 1/1 にする） <input type="text" id="frLg" style="width:40px"></label>
  <label>左右余白 <input type="number" id="frMargin" step="0.5"></label><label>下端から <input type="number" id="frBottom" step="0.5"></label>
  <label>高さ <input type="number" id="frHeight" step="0.5"></label><label><input type="checkbox" id="frBorder"> 用紙外枠も描く</label></div>
  <div class="row"><label>会社名（ロゴ欄） <input type="text" id="frCompany" style="width:220px"></label>
@@ -323,8 +323,8 @@ details summary{cursor:pointer;color:var(--mute)}
  <span class="hint">保存してからプレビューが反映されます</span></div>
  <img class="prev" id="frImg" alt=""></section>
 <section id="t-pens"><h2>線色・文字種</h2>
- <div class="row"><table style="width:auto" id="penTable"><thead><tr><th>線色</th><th>画面色</th><th>RGB</th><th>印刷線幅 mm</th></tr></thead><tbody></tbody></table>
- <table style="width:auto;margin-left:24px" id="ttTable"><thead><tr><th>文字種</th><th>幅</th><th>高さ</th><th>間隔</th><th>色</th></tr></thead><tbody></tbody></table></div>
+ <div class="row"><table style="width:auto" id="penTable"><thead><tr><th>線色 No.</th><th>画面色</th><th>RGB</th><th>印刷線幅 mm</th></tr></thead><tbody></tbody></table>
+ <table style="width:auto;margin-left:24px" id="ttTable"><thead><tr><th>文字種</th><th>幅 mm</th><th>高さ mm</th><th>間隔 mm</th><th>線色 No.</th></tr></thead><tbody></tbody></table></div>
  <p class="hint">jw_win.jwf から取り込むと Jw_cad と同じ値になります。プレビューの色と、AI が置く文字の寸法に使われます。</p></section>
 <section id="t-drawings"><h2>図面ごとの設定</h2>
  <div class="row"><label>図面 <select id="drwSel"></select></label><button id="drwLoad">読み込む</button>
@@ -343,6 +343,13 @@ const $=s=>document.querySelector(s);const $$=s=>[...document.querySelectorAll(s
 const HEX='0123456789ABCDEF'.split('');
 const TYPES=[['wall','壁'],['structure_wall','躯体壁(structural)'],['column','柱'],['grid','通り芯'],['room','室名'],['text','文字'],['dimension','寸法'],['opening','建具'],['equipment','機器'],['pipe','配管'],['line','線']];
 const PIPES=['給水','給湯','排水','汚水','雑排水','通気','ガス','冷媒','ドレン','ダクト','給気','排気','換気','消火'];
+const LC_NAMES={1:'1 水色',2:'2 黒',3:'3 緑',4:'4 黄',5:'5 紫',6:'6 青',7:'7 深緑(灰)',8:'8 赤',9:'9 補助線色'};
+const LT_NAMES={1:'1 実線',2:'2 点線1',3:'3 点線2',4:'4 点線3',5:'5 一点鎖1',6:'6 一点鎖2',7:'7 二点鎖1',8:'8 二点鎖2',9:'9 補助線種'};
+const selOpts=(names,val)=>`<option value="">（指定なし）</option>`+Object.entries(names).map(([k,v])=>`<option value="${k}" ${String(val)===k?'selected':''}>${v}</option>`).join('');
+const selLC=(attr,val)=>`<select data-d="${attr}">${selOpts(LC_NAMES,val)}</select>`;
+const selLT=(attr,val)=>`<select data-d="${attr}">${selOpts(LT_NAMES,val)}</select>`;
+const selLG=(attr,val)=>`<select data-d="${attr}"><option value="">（指定なし）</option>${HEX.map(h=>`<option value="${h}" ${val!==undefined&&val!==''&&Number(val).toString(16).toUpperCase()===h?'selected':''}>${h}</option>`).join('')}</select>`;
+const selLY=(attr,val)=>`<select data-d="${attr}"><option value="">（指定なし）</option>${HEX.map((h,i)=>`<option value="${i}" ${String(val)===String(i)?'selected':''}>${h}</option>`).join('')}</select>`;
 let ST={profiles:[],drawings:[],presets:{},papers:[]},P=null,D=null;
 const toast=m=>{const t=$('#toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2200)};
 const api=async(u,o={})=>{const r=await fetch(u,{headers:o.body&&!(o.body instanceof FormData)?{'Content-Type':'application/json'}:{},...o});const j=await r.json().catch(()=>({}));if(!r.ok||j.error){throw new Error(j.error||r.statusText)}return j};
@@ -357,7 +364,7 @@ async function loadState(){ST=await api('/api/state');$('#homeHint').textContent
  if(sel.value)await loadProfile(sel.value);else newProfile();}
 function newProfile(){const n=prompt('プロファイル名（英数字・日本語可）','mycompany');if(!n)return;P={name:n,group_names:{},group_scales:{},layer_names:{},defaults:{},frame:{lg:'F',style:'strip',fields:{}}};fill();}
 async function loadProfile(n){P=await api('/api/profile/'+encodeURIComponent(n));fill();}
-function layerEditor(root,gn,gs,ln,editableScale=true){root.innerHTML='';const t=document.createElement('table');t.innerHTML='<thead><tr><th style="width:40px">lg</th><th>グループ名</th><th style="width:110px">縮尺 1/</th><th style="width:70px"></th></tr></thead>';const tb=document.createElement('tbody');
+function layerEditor(root,gn,gs,ln,editableScale=true){root.innerHTML='';const t=document.createElement('table');t.innerHTML='<thead><tr><th style="width:60px">グループ</th><th>グループ名</th><th style="width:110px">縮尺 1/</th><th style="width:70px"></th></tr></thead>';const tb=document.createElement('tbody');
  HEX.forEach(h=>{const tr=document.createElement('tr');tr.innerHTML=`<td><b>${h}</b></td><td><input type="text" data-g="${h}" value="${gn[h]||''}"></td><td><input type="number" step="any" data-s="${h}" value="${gs[h]??''}" ${editableScale?'':'disabled'}></td><td><button data-x="${h}">レイヤ ▾</button></td>`;tb.appendChild(tr);
   const tr2=document.createElement('tr');tr2.style.display='none';tr2.innerHTML=`<td></td><td colspan="3"><div class="grid16">${HEX.map(l=>`<input type="text" placeholder="${h}-${l}" data-l="${h}-${l}" value="${ln[h+'-'+l]||''}">`).join('')}</div></td>`;tb.appendChild(tr2);
   tr.querySelector('button').onclick=()=>{tr2.style.display=tr2.style.display==='none'?'':'none'}});
@@ -365,9 +372,11 @@ function layerEditor(root,gn,gs,ln,editableScale=true){root.innerHTML='';const t
 function readLayerEditor(root){const gn={},gs={},ln={};root.querySelectorAll('[data-g]').forEach(i=>{if(i.value.trim())gn[i.dataset.g]=i.value.trim()});root.querySelectorAll('[data-s]').forEach(i=>{if(i.value!=='')gs[i.dataset.s]=parseFloat(i.value)});root.querySelectorAll('[data-l]').forEach(i=>{if(i.value.trim())ln[i.dataset.l]=i.value.trim()});return {gn,gs,ln}}
 function fill(){$('#company').value=P.company||'';$('#desc').value=P.description||'';$('#paper').value=P.paper||'A3';$('#scale').value=P.scale||'';$('#font').value=P.font||'';
  layerEditor($('#layerEditor'),P.group_names||{},P.group_scales||{},P.layer_names||{});
- const tb=$('#defTable tbody');tb.innerHTML='';TYPES.forEach(([k,label])=>{const d=(P.defaults||{})[k]||{};const extra=k==='wall'?`厚 <input type="number" data-d="${k}.thickness" value="${d.thickness??''}"> 壁芯 <input type="checkbox" data-d="${k}.core" ${d.core?'checked':''}> 芯ly <input type="number" data-d="${k}.core_ly" value="${d.core_ly??''}"> 建具lg <input type="text" data-d="${k}.opening_lg" style="width:40px" value="${d.opening_lg??''}"> 建具ly <input type="number" data-d="${k}.opening_ly" value="${d.opening_ly??''}"> 建具lc <input type="number" data-d="${k}.opening_lc" value="${d.opening_lc??''}">`:k==='opening'?`枠外 <input type="number" data-d="${k}.frame" value="${d.frame??''}">`:'';
-  tb.insertAdjacentHTML('beforeend',`<tr><td>${label}<span class="chip">${k}</span></td><td><input type="text" data-d="${k}.lg" style="width:44px" value="${d.lg??''}"></td><td><input type="number" data-d="${k}.ly" value="${d.ly??''}"></td><td><input type="number" data-d="${k}.lc" value="${d.lc??''}"></td><td><input type="number" data-d="${k}.lt" value="${d.lt??''}"></td><td>${extra}</td></tr>`)});
- const pb=$('#pipeTable tbody');pb.innerHTML='';PIPES.forEach(s=>{const v=(P.pipe_layers||{})[s]||[];pb.insertAdjacentHTML('beforeend',`<tr><td>${s}</td><td><input type="text" data-p="${s}.0" style="width:44px" value="${v[0]!==undefined?Number(v[0]).toString(16).toUpperCase():''}"></td><td><input type="number" data-p="${s}.1" value="${v[1]??''}"></td></tr>`)});
+ const tb=$('#defTable tbody');tb.innerHTML='';TYPES.forEach(([k,label])=>{const d=(P.defaults||{})[k]||{};
+  const extra=k==='wall'?`壁厚 mm <input type="number" data-d="${k}.thickness" value="${d.thickness??''}"> 　壁芯を描く <input type="checkbox" data-d="${k}.core" ${d.core?'checked':''}> 壁芯レイヤ ${selLY(k+'.core_ly',d.core_ly)} 壁芯線色 ${selLC(k+'.core_lc',d.core_lc)}<br>建具の グループ ${selLG(k+'.opening_lg',d.opening_lg)} レイヤ ${selLY(k+'.opening_ly',d.opening_ly)} 線色 ${selLC(k+'.opening_lc',d.opening_lc)}`
+   :k==='opening'?`枠外 mm <input type="number" data-d="${k}.frame" value="${d.frame??''}">`:'';
+  tb.insertAdjacentHTML('beforeend',`<tr><td>${label}<span class="chip">${k}</span></td><td>${selLG(k+'.lg',d.lg)}</td><td>${selLY(k+'.ly',d.ly)}</td><td>${selLC(k+'.lc',d.lc)}</td><td>${selLT(k+'.lt',d.lt)}</td><td class="hint">${extra}</td></tr>`)});
+ const pb=$('#pipeTable tbody');pb.innerHTML='';PIPES.forEach(s=>{const v=(P.pipe_layers||{})[s]||[];pb.insertAdjacentHTML('beforeend',`<tr><td>${s}</td><td><select data-p="${s}.0"><option value="">（指定なし）</option>${HEX.map(h=>`<option value="${h}" ${v[0]!==undefined&&Number(v[0]).toString(16).toUpperCase()===h?'selected':''}>${h}</option>`).join('')}</select></td><td><select data-p="${s}.1"><option value="">（指定なし）</option>${HEX.map((h,i)=>`<option value="${i}" ${String(v[1])===String(i)?'selected':''}>${h}</option>`).join('')}</select></td></tr>`)});
  const f=P.frame||{};$('#frStyle').value=f.style||'strip';$('#frLg').value=f.lg??'F';$('#frMargin').value=f.margin??16;$('#frBottom').value=f.bottom??11.5;$('#frHeight').value=f.height??19;$('#frBorder').checked=!!f.border;$('#frCompany').value=(f.fields||{}).company||'';
  $('#frTplInfo').textContent=P.frame_template?`テンプレート取込済: ${P.frame_template.paper} から ${P.frame_template.entities.length} 要素（元グループ ${P.frame_template.source_lg}, 1/${P.frame_template.source_scale}）`:'テンプレート未取込（基本タブで .jww をドロップ）';
  const pt=$('#penTable tbody');pt.innerHTML='';const DEF={1:[0,192,192],2:[0,0,0],3:[0,192,0],4:[192,192,0],5:[192,0,192],6:[0,0,255],7:[192,192,192],8:[255,0,128],9:[192,192,192]};
@@ -377,7 +386,7 @@ function fill(){$('#company').value=P.company||'';$('#desc').value=P.description
  $('#frPaper').value=P.paper||'A3';$('#frScale').value=P.scale||50;$('#frImg').src='';}
 function collect(){const o={...P};o.company=$('#company').value;o.description=$('#desc').value;o.paper=$('#paper').value;o.scale=parseFloat($('#scale').value)||undefined;o.font=$('#font').value||undefined;
  const {gn,gs,ln}=readLayerEditor($('#layerEditor'));o.group_names=gn;o.group_scales=gs;o.layer_names=ln;
- const defs={};$$('[data-d]').forEach(i=>{const [t,k]=i.dataset.d.split('.');const v=i.type==='checkbox'?i.checked:i.value;if(v===''||v===false)return;defs[t]=defs[t]||{};defs[t][k]=i.type==='checkbox'?true:(k==='lg'||k==='opening_lg')?parseInt(v,16):parseFloat(v)});o.defaults=defs;
+ const defs={};$$('[data-d]').forEach(i=>{const [t,k]=i.dataset.d.split('.');const v=i.type==='checkbox'?i.checked:i.value;if(v===''||v===false||v==null)return;defs[t]=defs[t]||{};defs[t][k]=i.type==='checkbox'?true:(k==='lg'||k==='opening_lg')?parseInt(v,16):parseFloat(v)});o.defaults=defs;
  const pl={};$$('[data-p]').forEach(i=>{const [s,idx]=i.dataset.p.split('.');if(i.value==='')return;pl[s]=pl[s]||[0,0];pl[s][+idx]=idx==='0'?parseInt(i.value,16):parseInt(i.value)});o.pipe_layers=pl;
  o.frame={...(P.frame||{}),style:$('#frStyle').value,lg:$('#frLg').value||'F',margin:parseFloat($('#frMargin').value),bottom:parseFloat($('#frBottom').value),height:parseFloat($('#frHeight').value),border:$('#frBorder').checked,fields:{...((P.frame||{}).fields||{}),company:$('#frCompany').value||undefined}};
  const pc={};$$('[data-pen]').forEach(i=>{const h=i.value;pc[i.dataset.pen]=[1,3,5].map(k=>parseInt(h.substr(k,2),16))});o.pen_colors=pc;
