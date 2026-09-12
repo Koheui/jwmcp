@@ -135,6 +135,7 @@ def setup(exchange: Path | None = None, win_exchange: str | None = None, wait: i
         written.append(str(bat_dir / name))
     readme = (
         "JW MCP 外部変形ブリッジ\r\n"
+        "同じ PC に Jw_cad と jwmcp がある場合は、このフォルダをそのまま使えば同期は不要です。\r\n"
         f"1. このフォルダ全体（{ex.name}）を Windows 側から見える場所に置く（Google Drive 等）。\r\n"
         f"   .bat 内の EX= が Windows 側のパス（{win}）になっていることを確認。\r\n"
         "2. gaihen フォルダ内の .bat を Jw_cad の 外部変形 から選ぶ。\r\n"

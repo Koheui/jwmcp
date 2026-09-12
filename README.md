@@ -38,6 +38,25 @@ Claude Desktop / Antigravity など他の MCP クライアントも同様に std
 - `JWMCP_HOME` — 作図データ・スキャン・プレビュー・エクスポートの保存先（既定 `~/.jwmcp`）
 - `JWMCP_EXCHANGE` — 外部変形ブリッジの共有フォルダ（既定 `~/JW_MCP_Exchange`）。Google Drive 等の同期フォルダにすると Windows 側と共有できる
 
+## Windows で動かす（Jw_cad と同じ PC）
+
+依存パッケージはすべて Windows x64 用のホイールがあり、Mac と同じコードがそのまま動きます。
+
+1. Python 3.11 以上を入れる（インストーラで "Add python.exe to PATH" にチェック）
+2. リポジトリを取得して `scripts\windows\setup.bat` をダブルクリック
+   （`.venv` 作成 → インストール → テスト → 外部変形用フォルダ `%USERPROFILE%\JW_MCP_Exchange` と .bat 生成 → `claude` CLI があれば MCP 登録）
+3. Claude Desktop を使う場合は `claude_desktop_config.json` に次を追加
+
+```json
+{"mcpServers": {"jwmcp": {"command": "C:\\path\\to\\jwmcp\\.venv\\Scripts\\python.exe", "args": ["-m", "jwmcp"]}}}
+```
+
+4. 設定画面は `scripts\windows\settings.bat`
+5. Jw_cad 側は `JW_MCP_Exchange\gaihen\JWMCP_send.bat` などを外部変形から選ぶだけ。同じ PC なので共有フォルダの同期は不要
+
+Mac に Claude、Windows に Jw_cad という分担でも動きます。その場合は `JWMCP_EXCHANGE` を Google Drive 等の同期フォルダにし、
+`gaihen_setup(win_exchange="G:\\マイドライブ\\JW_MCP_Exchange")` のように Windows 側から見たパスを渡して .bat を作ります。
+
 ## 使い方の例
 
 ```
