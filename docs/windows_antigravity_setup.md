@@ -37,7 +37,10 @@ where claude
 "<SHARE>\jwmcp\scripts\windows\setup.bat"
 ```
 
-これが行うこと: `%LOCALAPPDATA%\jwmcp\venv` 作成 → `pip install -e jwmcp[dev]` → テスト → 環境変数 `JWMCP_HOME=<SHARE>\home` と `JWMCP_EXCHANGE=<SHARE>\exchange` を setx → `exchange\gaihen\` に Jw_cad 用 .bat を生成 → 最後に MCP 設定 JSON を表示。
+これが行うこと: `%LOCALAPPDATA%\jwmcp\venv` 作成 → `pip install -e jwmcp[dev]` → テスト → 環境変数 `JWMCP_HOME=<SHARE>\home` と
+`JWMCP_EXCHANGE=%LOCALAPPDATA%\jwmcp\exchange`（**ローカル**。Google Drive 上だと外部変形の応答待ちが遅くなるため）を setx →
+`%LOCALAPPDATA%\jwmcp\exchange\gaihen\` に Jw_cad 用 .bat を生成 → 最後に MCP 設定 JSON を表示。
+**2 回目以降に実行した場合も、表示された JSON で Antigravity の mcp_config.json の jwmcp エントリを置き換える**（env のパスが変わるため）。
 
 期待する結果: `24 passed`（または全件 pass）、`registered` か JSON の表示。
 失敗したら「手順 2b」へ。成功したら「手順 3」へ。
@@ -74,7 +77,7 @@ Antigravity のエージェントパネル → MCP サーバーの管理（Manag
       "args": ["-m", "jwmcp"],
       "env": {
         "JWMCP_HOME": "<SHARE>\\home",
-        "JWMCP_EXCHANGE": "<SHARE>\\exchange"
+        "JWMCP_EXCHANGE": "C:\\Users\\<USER>\\AppData\\Local\\jwmcp\\exchange"
       }
     }
   }
@@ -99,7 +102,7 @@ Antigravity のエージェントパネル → MCP サーバーの管理（Manag
    ```
 5. `drawing_preview` で `name="win_test"` → 画像が返ること（日本語が豆腐になっていないか見る）。
 6. `drawing_export` で `name="win_test"`, `format="dxf"`, `out="<SHARE>\home\exports\win_test.dxf"`。
-7. `gaihen_status` → `bats_present` に `JWMCP_send.bat` `JWMCP_send_all.bat` `JWMCP_import.bat` が並ぶこと。
+7. `gaihen_status` → `exchange` が `C:\Users\<USER>\AppData\Local\jwmcp\exchange`（ローカル）で、`bats_present` に `JWMCP_send.bat` `JWMCP_send_all.bat` `JWMCP_import.bat` が並ぶこと。
 
 ## 手順 5: Jw_cad で確認（人が操作する部分。エージェントは手順を案内し、結果を聞き取る）
 
@@ -112,7 +115,8 @@ A. **DXF を開く**（DXF には縮尺情報が無いので、先に Jw_cad 側
    確認: レイヤ名（通り芯・壁・室名・図面枠）が付いているか、「事務室」「Windows接続テスト」の文字が読めるか（文字化けなら報告）。
    もし縮尺が極端（1/1000000 など）になる場合は、DXF が古い版です。Antigravity で `drawing_export` を実行し直して新しい DXF を作る。
 
-B. **外部変形（送信）**: Jw_cad で何か図面を開き → 外部変形 → `<SHARE>\exchange\gaihen\JWMCP_send.bat` を選ぶ → 範囲選択 → 待機状態になる。
+B. **外部変形（送信）**: Jw_cad で何か図面を開き → 外部変形 → `%LOCALAPPDATA%\jwmcp\exchange\gaihen\JWMCP_send.bat` を選ぶ → 範囲選択 → 待機状態になる。
+   （所要時間の目安: .bat の起動〜ジョブ到着は 1 秒以内。AI が応答を作る時間はエージェント次第で数十秒かかる。取込 C は事前に用意してあるので 1〜2 秒で入るはず。それより遅い場合は exchange が Drive 上になっている可能性があるので setup.bat を再実行）
    その間に Antigravity で `gaihen_jobs` → ジョブが 1 件見えること → `gaihen_read` で図形が読めること →
    `gaihen_respond` で `job_id` と entities `[{"type":"text","x":0,"y":0,"text":"jwmcp OK","height":5}]` を返す。
    確認: Jw_cad に「jwmcp OK」の文字が入ったか。何も起きない／「未実行」と出た場合はその旨を報告。

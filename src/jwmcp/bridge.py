@@ -39,8 +39,11 @@ setlocal enabledelayedexpansion
 set "EX={win_exchange}"
 set "WAIT={wait}"
 set "KIND={kind}"
-for /f "delims=" %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set "TS=%%a"
-if "%TS%"=="" set "TS=%RANDOM%%RANDOM%"
+REM job id from date/time (locale independent enough) + random; no PowerShell start-up cost
+set "TS=%DATE:/=%%DATE:-=%_%TIME::=%"
+set "TS=%TS:.=%"
+set "TS=%TS: =0%"
+set "TS=%TS:~0,17%_%RANDOM%"
 set "JOB=%TS%_%KIND%"
 if not exist "%EX%\inbox" mkdir "%EX%\inbox"
 if not exist "%EX%\outbox" mkdir "%EX%\outbox"
