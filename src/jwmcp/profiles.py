@@ -156,7 +156,17 @@ def from_jwf(path: str, name: str, base: dict | None = None) -> dict:
         prof.setdefault("group_names", {}).update(parsed["group_names"])
     if parsed.get("layer_names"):
         prof.setdefault("layer_names", {}).update(parsed["layer_names"])
-    prof.setdefault("sources", {})["jwf"] = str(Path(path).expanduser())
+    # keep a copy of the source next to the profile so a later .jwf export can carry the rest of the
+    # user's environment (uploads land in a temp folder that disappears)
+    src = Path(path).expanduser()
+    keep = profile_dir() / f"{name}.source.jwf"
+    try:
+        if src.resolve() != keep.resolve():
+            keep.write_bytes(src.read_bytes())
+        prof.setdefault("sources", {})["jwf"] = str(keep)
+        prof["sources"]["jwf_original"] = str(src)
+    except OSError:
+        prof.setdefault("sources", {})["jwf"] = str(src)
     save_profile(prof)
     return prof
 
