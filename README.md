@@ -72,6 +72,17 @@ Claude Desktop / Antigravity など他の MCP クライアントも同様に std
 プリセット（`presets_list`）: `arch_jp`（一般平面図）, `arch_jp_renovation`（既存図。0敷地 1記述 2躯体 3建具 4内部壁 5計画図）, `mep_jp`（設備図）。
 プリセット付きの図面では、部品の種類ごとにレイヤグループ・レイヤ・線色が自動で入ります。
 
+### 設定画面（ブラウザ）
+
+```bash
+python -m jwmcp settings        # http://127.0.0.1:8765 が開く
+```
+
+会社や案件ごとのプロファイル（レイヤグループ・レイヤ名・縮尺・部品の既定・線色・文字種・図面枠）を画面で編集できます。
+`jw_win.jwf` やテンプレート `.jww` をドラッグ＆ドロップすると値が自動で入り、図面枠は用紙サイズを切り替えてプレビューできます。
+「図面ごとの設定」タブでは個々の図面のレイヤ構成を編集し、プロファイルを適用したり、逆に図面の構成を新しいプロファイルとして保存できます。
+プロファイルは JSON 1 ファイルなので、そのまま他の人に渡せます。
+
 ### プロファイル（会社設定）と図面枠
 `profile_list` `profile_show` `profile_set` `profile_from_jwf(path, name)` `profile_from_jww(path, name, frame_lg?)` `jwf_read` `drawing_frame`
 
