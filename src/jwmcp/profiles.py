@@ -146,6 +146,12 @@ def from_jwf(path: str, name: str, base: dict | None = None) -> dict:
         prof["pen_colors"] = {str(k): v for k, v in parsed["pen_colors"].items()}
     if parsed.get("print_colors"):
         prof["print_colors"] = {str(k): v for k, v in parsed["print_colors"].items()}
+    if parsed.get("linetypes"):
+        prof["linetypes"] = parsed["linetypes"]
+    if parsed.get("line_width_unit"):
+        prof["line_width_unit"] = parsed["line_width_unit"]
+    if parsed.get("print_dpi"):
+        prof["print_dpi"] = parsed["print_dpi"]
     if parsed.get("font"):
         prof["font"] = parsed["font"]
     if parsed.get("group_scales"):

@@ -35,6 +35,15 @@ Jw_cad を AI から扱う MCP サーバー。全体像と使い方は README.md
 - 外部変形の座標は「基準点相対」。send 系 .bat は `#hp`（基準点＝用紙左下）＋`#zs` で用紙サイズを得て図面原点（用紙中心）に換算する。
   import.bat は `#0` で取り込み位置を 1 点指示させる。
 
+## .jwf の読み方で間違えやすい所（2026-09-13 公式ヘルプ Jw_cad.chm と Sample.jwf で確認）
+- `PCOLLOR_n = r g b 線幅 実点半径`。5 番目は線幅ではなく実点半径。線幅の単位は `S_COMM_2` の 2 番目で決まり、
+  正なら dot、負なら 1/N mm（田村さんの環境は -100 で 1/100 mm）。
+- `LTYPE_02..08 = hex 1パターンのドット数 画面ピッチ 印刷ピッチ`、`LTYPE_09` は印刷ピッチなし、
+  `LTYPE_R1..R5 = hex 画面振幅 画面ピッチ 印刷振幅 印刷ピッチ`、`LTYPE_L1..L4` は倍長線種で通常と同じ並び。
+  hex は 32 ビット、上位ビットが 1 文字目（「－」=描く、空白=描かない）。
+- `P_dpi`（300/600）は Jw_cad が読むが .jwf に書き出さない。点線ピッチがこの dpi 基準で印刷されるかはヘルプに記載がない。
+  推測で断定せず、`linetype_test_sheet` を実機で印刷して確かめる前提にしている。
+
 ## 環境
 - Python 3.11 venv（`.venv`）。mcp SDK は **2.x**（`from mcp.server.mcpserver import MCPServer, Image`）。
   画像を返すツールは `structured_output=False` が必要。

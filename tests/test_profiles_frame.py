@@ -77,7 +77,9 @@ def test_parse_real_jwf(tmp_path, monkeypatch):
     assert p["paper"] == "A3" and p["pen_colors"][1] == [0, 192, 192] and p["text_types"][3]["height"] == 3.0
     assert p["group_scales"]["0"] == 50 and p["font"] == "ＭＳ ゴシック"
     prof = profiles.from_jwf(str(JWF), "fs")
-    assert prof["text_types"]["3"]["width"] == 2.5 and prof["print_colors"]["2"]["width_mm"] == 0.3
+    assert prof["text_types"]["3"]["width"] == 2.5
+    assert prof["print_colors"]["2"]["width"] == 3 and prof["print_colors"]["2"]["point_radius"] == 0.3
+    assert prof["line_width_unit"] == {"raw": 100, "mode": "dots"} and prof["linetypes"]["02"]["hex"] == "aaaaaaaa"
 
 
 @pytest.mark.skipif(not KDIC.exists(), reason="KDIC drawing not on this machine")

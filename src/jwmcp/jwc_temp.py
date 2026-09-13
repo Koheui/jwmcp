@@ -336,7 +336,7 @@ def parse(text: str) -> JwcTemp:
 def serialize(entities: list[dict], *, scale_for=None, delete_selected: bool = False,
               error: str | None = None, notice: str | None = None,
               group_names: dict[int, str] | None = None, layer_names: dict[str, str] | None = None,
-              repeat: bool = False, offset_for=None) -> str:
+              repeat: bool = False, offset_for=None, paper_coords: bool = False) -> str:
     """Build the text Jw_cad reads back. Coordinates real mm. Returns str (encode with cp932).
     offset_for(lg) -> (dx, dy) shifts primitives of that layer group (used to convert drawing-absolute
     coordinates back to the 外部変形 base point)."""
@@ -350,6 +350,9 @@ def serialize(entities: list[dict], *, scale_for=None, delete_selected: bool = F
         out.append("h#" + notice.replace("\r", "").replace("\n", " "))
     if repeat:
         out.append("hr")
+    if paper_coords:
+        # bz: Jw_cad reads the following coordinates as paper mm (図寸) regardless of the group scale
+        out.append("bz")
     scale_for = scale_for or (lambda e: 100.0)
 
     for g, name in sorted((group_names or {}).items()):

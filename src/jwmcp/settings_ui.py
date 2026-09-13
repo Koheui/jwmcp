@@ -32,8 +32,10 @@ def _err(msg: str, code: int = 400) -> JSONResponse:
 
 
 async def state(_: Request):
+    from . import linetype
     return _ok({"profiles": profiles.list_profiles(), "drawings": Drawing.list_names(), "presets": preset_names(),
-                "papers": list(PAPER_SIZES_MM), "home": str(jwmcp_home())})
+                "papers": list(PAPER_SIZES_MM), "home": str(jwmcp_home()),
+                "linetype_defaults": linetype.DEFAULTS, "linetype_names": linetype.NAMES})
 
 
 async def profile_get(req: Request):
@@ -154,6 +156,27 @@ async def profile_export_jwf(req: Request):
     return _ok(r)
 
 
+async def profile_linetype_test(req: Request):
+    from . import bridge, jwc_temp, linetype
+    name = req.path_params["name"]
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    dpi = int(body.get("dpi") or 600)
+    try:
+        prof = profiles.load_profile(name)
+    except ModelError as exc:
+        return _err(str(exc), 404)
+    lts = {**linetype.DEFAULTS, **(prof.get("linetypes") or {})}
+    d = Drawing(f"線種テスト_{name}", scale=1, paper="A4")
+    d.add(linetype.test_sheet_entities(lts, dpi))
+    d.save()
+    text = jwc_temp.serialize(d.entities, scale_for=lambda e: 1.0, paper_coords=True,
+                              notice="線種テスト: 印刷倍率100%で印刷し、目盛と比べてください")
+    return _ok({"drawing": d.name, **bridge.prepare_import(None, text)})
+
+
 async def preview_frame(req: Request):
     name = req.path_params["name"]
     paper = req.query_params.get("paper", "A3")
@@ -270,6 +293,7 @@ routes = [
     Route("/api/profile/{name}/import_jwf", profile_import_jwf, methods=["POST"]),
     Route("/api/profile/{name}/import_jww", profile_import_jww, methods=["POST"]),
     Route("/api/profile/{name}/export_jwf", profile_export_jwf),
+    Route("/api/profile/{name}/linetype_test", profile_linetype_test, methods=["POST"]),
     Route("/api/profile/{name}/logo", profile_logo, methods=["POST"]),
     Route("/api/profile/{name}/logo", profile_logo_delete, methods=["DELETE"]),
     Route("/api/preview/frame/{name}", preview_frame),
@@ -325,6 +349,11 @@ img.prev{max-width:100%;border:1px solid var(--line);border-radius:8px;backgroun
 .sw{width:22px;height:22px;border-radius:4px;border:1px solid var(--line);display:inline-block;vertical-align:middle}
 textarea.json{width:100%;height:60vh;font:12px/1.4 ui-monospace,Menlo,monospace}
 details summary{cursor:pointer;color:var(--mute)}
+.ltcells{display:grid;grid-template-columns:repeat(32,11px);gap:1px;margin-bottom:3px}
+.ltc{width:11px;height:16px;background:#e6e9ee;cursor:pointer;border-bottom:3px solid transparent;box-sizing:border-box}
+.ltc.on{background:#1d2430}.ltc.u{border-bottom-color:#0f6fbf}
+code.ltpat{font:11px ui-monospace,Menlo,Consolas,monospace;white-space:pre;color:#6b7380}
+#ltTable td{vertical-align:top}#ltTable input[type=number]{width:56px}
 </style></head><body>
 <header><h1>jwmcp 設定</h1>
  <label>プロファイル <select id="profSel"></select></label>
@@ -333,7 +362,7 @@ details summary{cursor:pointer;color:var(--mute)}
 <main>
 <nav>
  <a data-t="basic" class="on">基本</a><a data-t="layers">レイヤ構成</a><a data-t="defaults">部品の既定</a><a data-t="frame">図面枠</a>
- <a data-t="pens">線色・文字種</a><a data-t="drawings">図面ごとの設定</a><a data-t="json">JSON</a>
+ <a data-t="pens">線色・文字種</a><a data-t="linetypes">線種</a><a data-t="drawings">図面ごとの設定</a><a data-t="json">JSON</a>
 </nav>
 <div>
 <section id="t-basic" class="on"><h2>基本</h2>
@@ -382,9 +411,19 @@ details summary{cursor:pointer;color:var(--mute)}
  <span class="hint">保存してからプレビューが反映されます</span></div>
  <img class="prev" id="frImg" alt=""></section>
 <section id="t-pens"><h2>線色・文字種</h2>
- <div class="row"><table style="width:auto" id="penTable"><thead><tr><th>線色 No.</th><th>画面色</th><th>RGB</th><th>印刷線幅 mm</th></tr></thead><tbody></tbody></table>
+ <div class="row"><table style="width:auto" id="penTable"><thead><tr><th>線色 No.</th><th>画面色</th><th>RGB</th><th>印刷線幅</th><th>実点半径 mm</th></tr></thead><tbody></tbody></table>
  <table style="width:auto;margin-left:24px" id="ttTable"><thead><tr><th>文字種</th><th>幅 mm</th><th>高さ mm</th><th>間隔 mm</th><th>線色 No.</th></tr></thead><tbody></tbody></table></div>
  <p class="hint">jw_win.jwf から取り込むと Jw_cad と同じ値になります。プレビューの色と、AI が置く文字の寸法に使われます。</p></section>
+<section id="t-linetypes"><h2>線種（点線・鎖線が印刷でどう見えるか）</h2>
+ <p class="hint">Jw_cad の 基本設定「線種」タブと同じ値です。マス目をクリックすると線（黒）と空き（灰）が切り替わります。青い下線は「1 パターン」で繰り返す範囲。
+ 右側は印刷したときの実寸（mm）で描いた見本と、1 区切りごとの長さです。</p>
+ <div class="row"><label>印刷の 1 ドット <select id="ltDpi"><option value="600">600dpi（1 ドット 0.042 mm）</option><option value="300">300dpi（1 ドット 0.085 mm）</option></select></label>
+ <label>印刷倍率 <select id="ltScale"><option value="1">100%</option><option value="0.707">71%（A2 を A3 に）</option><option value="0.5">50%（A1 を A3 に）</option></select></label>
+ <label>見本の拡大 <input type="range" id="ltZoom" min="3" max="16" value="8"> <span id="ltZoomV" class="hint"></span></label>
+ <button id="ltReset">Jw_cad の初期値に戻す</button><button id="ltTest">線種テスト用の図形を作る</button></div>
+ <p class="hint">印刷の 1 ドットが 300dpi と 600dpi のどちらで数えられるかは Jw_cad のヘルプに書かれていません。「線種テスト用の図形」を Jw_cad に取り込み、印刷倍率 100% で 1 回印刷して定規と比べると確実です（Jw_cad の設定「プリンタ dpi」は .jwf に保存されないため、ここで選びます）。</p>
+ <div style="overflow-x:auto"><table id="ltTable"><thead><tr><th>線種</th><th>パターン（32 文字）</th><th>1 パターン</th><th>画面ピッチ</th><th>印刷ピッチ</th><th>印刷したときの見え方（実寸）</th></tr></thead><tbody></tbody></table></div>
+</section>
 <section id="t-drawings"><h2>図面ごとの設定</h2>
  <div class="row"><label>図面 <select id="drwSel"></select></label><button id="drwLoad">読み込む</button>
  <button id="drwApply">このプロファイルを適用</button><label><input type="checkbox" id="drwApplyFrame"> 図面枠も入れ直す</label>
@@ -413,7 +452,7 @@ let ST={profiles:[],drawings:[],presets:{},papers:[]},P=null,D=null;
 const toast=m=>{const t=$('#toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2200)};
 const api=async(u,o={})=>{const r=await fetch(u,{headers:o.body&&!(o.body instanceof FormData)?{'Content-Type':'application/json'}:{},...o});const j=await r.json().catch(()=>({}));if(!r.ok||j.error){throw new Error(j.error||r.statusText)}return j};
 $$('nav a').forEach(a=>a.onclick=()=>{$$('nav a').forEach(x=>x.classList.remove('on'));a.classList.add('on');$$('section').forEach(s=>s.classList.remove('on'));$('#t-'+a.dataset.t).classList.add('on');if(a.dataset.t==='json')$('#jsonArea').value=JSON.stringify(collect(),null,1)});
-async function loadState(){ST=await api('/api/state');$('#homeHint').textContent=ST.home;
+async function loadState(){ST=await api('/api/state');$('#homeHint').textContent=ST.home;LTD=ST.linetype_defaults||{};LTN=ST.linetype_names||{};
  const sel=$('#profSel');const cur=sel.value;sel.innerHTML=ST.profiles.map(p=>`<option value="${p.name}">${p.name}${p.company?' — '+p.company:''}</option>`).join('');
  if(cur&&ST.profiles.some(p=>p.name===cur))sel.value=cur;
  for(const id of ['#paper','#frPaper','#drwPaper']){$(id).innerHTML=ST.papers.map(p=>`<option>${p}</option>`).join('')}
@@ -441,10 +480,12 @@ function fill(){$('#company').value=P.company||'';$('#desc').value=P.description
  $('#frTplInfo').textContent=P.frame_template?`テンプレート取込済: ${P.frame_template.paper} から ${P.frame_template.entities.length} 要素（元グループ ${P.frame_template.source_lg??'-'}, 1/${P.frame_template.source_scale??'-'}）`:'テンプレート未取込（基本タブで .jww をドロップ、または Jw_cad から外部変形で送って保存）';
  const lg=(P.frame||{}).logo;$('#logoInfo').textContent=lg?`ロゴ設定済: ${lg.source||''}（${lg.polylines.length} 図形 / ${lg.points||'-'} 点 / 幅 ${lg.width_mm} mm）。ロゴがあると会社名の文字は出しません`:'ロゴ未設定（会社名の文字を表示）';
  const pt=$('#penTable tbody');pt.innerHTML='';const DEF={1:[0,192,192],2:[0,0,0],3:[0,192,0],4:[192,192,0],5:[192,0,192],6:[0,0,255],7:[192,192,192],8:[255,0,128],9:[192,192,192]};
- for(let n=1;n<=9;n++){const rgb=((P.pen_colors||{})[n])||DEF[n];const hex='#'+rgb.map(v=>v.toString(16).padStart(2,'0')).join('');const pw=((P.print_colors||{})[n]||{}).width_mm??'';pt.insertAdjacentHTML('beforeend',`<tr><td>${n}</td><td><input type="color" data-pen="${n}" value="${hex}"></td><td class="hint">${rgb.join(',')}</td><td><input type="number" step="0.01" data-pw="${n}" value="${pw}"></td></tr>`)}
+ for(let n=1;n<=9;n++){const rgb=((P.pen_colors||{})[n])||DEF[n];const hex='#'+rgb.map(v=>v.toString(16).padStart(2,'0')).join('');const pcl=(P.print_colors||{})[n]||{};const pw=pcl.width??pcl.width_index??'';const prr=pcl.point_radius??(pcl.width===undefined?pcl.width_mm:undefined)??'';const wu=(P.line_width_unit||{}).raw;
+  const wl=(wu!==undefined&&wu<0)?`× 1/${-wu} mm${pw!==''?` = ${(pw/(-wu)).toFixed(2)} mm`:''}`:'ドット';
+  pt.insertAdjacentHTML('beforeend',`<tr><td>${n}</td><td><input type="color" data-pen="${n}" value="${hex}"></td><td class="hint">${rgb.join(',')}</td><td><input type="number" step="1" data-pw="${n}" value="${pw}"> <span class="hint">${wl}</span></td><td><input type="number" step="0.05" data-prr="${n}" value="${prr}"></td></tr>`)}
  const tt=$('#ttTable tbody');tt.innerHTML='';const TT=P.text_types||{};const dw=[2,2.5,3,4,5,6,7,8,9,10],dc=[1,1,2,2,3,3,4,4,5,5];
  for(let n=1;n<=10;n++){const t=TT[n]||{width:dw[n-1],height:dw[n-1],spacing:0,pen:dc[n-1]};tt.insertAdjacentHTML('beforeend',`<tr><td>${n}</td><td><input type="number" step="0.1" data-tt="${n}.width" value="${t.width}"></td><td><input type="number" step="0.1" data-tt="${n}.height" value="${t.height}"></td><td><input type="number" step="0.1" data-tt="${n}.spacing" value="${t.spacing}"></td><td><input type="number" data-tt="${n}.pen" value="${t.pen}"></td></tr>`)}
- $('#frPaper').value=P.paper||'A3';$('#frScale').value=P.scale||50;$('#frImg').src='';}
+ $('#frPaper').value=P.paper||'A3';$('#frScale').value=P.scale||50;$('#frImg').src='';fillLinetypes();}
 function collect(){const o={...P};o.company=$('#company').value;o.description=$('#desc').value;o.paper=$('#paper').value;o.scale=parseFloat($('#scale').value)||undefined;o.font=$('#font').value||undefined;
  const {gn,gs,ln}=readLayerEditor($('#layerEditor'));o.group_names=gn;o.group_scales=gs;o.layer_names=ln;
  const defs={};$$('[data-d]').forEach(i=>{const [t,k]=i.dataset.d.split('.');const v=i.type==='checkbox'?i.checked:i.value;if(v===''||v===false||v==null)return;defs[t]=defs[t]||{};defs[t][k]=i.type==='checkbox'?true:(k==='lg'||k==='opening_lg')?parseInt(v,16):parseFloat(v)});o.defaults=defs;
@@ -453,8 +494,10 @@ function collect(){const o={...P};o.company=$('#company').value;o.description=$(
   company_height:parseFloat($('#frCompanyH').value)||5,title_height:parseFloat($('#frTitleH').value)||3,value_height:parseFloat($('#frValueH').value)||2.5,label_height:parseFloat($('#frLabelH').value)||2,
   fields:{...((P.frame||{}).fields||{}),company:$('#frCompany').value||undefined}};
  const pc={};$$('[data-pen]').forEach(i=>{const h=i.value;pc[i.dataset.pen]=[1,3,5].map(k=>parseInt(h.substr(k,2),16))});o.pen_colors=pc;
- const pr={...(P.print_colors||{})};$$('[data-pw]').forEach(i=>{if(i.value!==''){pr[i.dataset.pw]={...(pr[i.dataset.pw]||{}),width_mm:parseFloat(i.value)}}});o.print_colors=pr;
- const tt={};$$('[data-tt]').forEach(i=>{const [n,k]=i.dataset.tt.split('.');tt[n]=tt[n]||{};tt[n][k]=parseFloat(i.value)});o.text_types=tt;return o}
+ const pr={...(P.print_colors||{})};const wuc=(P.line_width_unit||{}).raw;
+ $$('[data-pw]').forEach(i=>{if(i.value==='')return;const n=i.dataset.pw;const c={...(pr[n]||{})};delete c.width_index;c.width=parseInt(i.value);if(wuc!==undefined&&wuc<0){c.width_mm=+(c.width/(-wuc)).toFixed(4)}else{delete c.width_mm}pr[n]=c});
+ $$('[data-prr]').forEach(i=>{if(i.value==='')return;const n=i.dataset.prr;pr[n]={...(pr[n]||{}),point_radius:parseFloat(i.value)}});o.print_colors=pr;
+ const tt={};$$('[data-tt]').forEach(i=>{const [n,k]=i.dataset.tt.split('.');tt[n]=tt[n]||{};tt[n][k]=parseFloat(i.value)});o.text_types=tt;o.linetypes=JSON.parse(JSON.stringify(LT));o.print_dpi=+$('#ltDpi').value;return o}
 $('#exportJwf').onclick=async e=>{e.preventDefault();try{await api('/api/profile/'+encodeURIComponent(P.name),{method:'PUT',body:JSON.stringify(collect())});window.location=`/api/profile/${encodeURIComponent(P.name)}/export_jwf?download=1`}catch(x){toast('エラー: '+x.message)}};
 $('#save').onclick=async()=>{try{P=collect();await api('/api/profile/'+encodeURIComponent(P.name),{method:'PUT',body:JSON.stringify(P)});toast('保存しました');await loadState()}catch(e){toast('エラー: '+e.message)}};
 $('#profSel').onchange=e=>loadProfile(e.target.value);$('#newProf').onclick=newProfile;
@@ -472,6 +515,43 @@ $('#drwLoad').onclick=async()=>{try{D=await api('/api/drawing/'+encodeURICompone
 $('#drwSave').onclick=async()=>{if(!D)return;try{const {gn,gs,ln}=readLayerEditor($('#drwLayerEditor'));await api('/api/drawing/'+encodeURIComponent(D.name),{method:'PUT',body:JSON.stringify({paper:$('#drwPaper').value,main_scale:parseFloat($('#drwScale').value),description:$('#drwDesc').value,group_names:gn,group_scales:gs,layer_names:ln})});toast('図面を保存しました');$('#drwLoad').click()}catch(e){toast('エラー: '+e.message)}};
 $('#drwApply').onclick=async()=>{if(!D)return;try{await api('/api/drawing/'+encodeURIComponent(D.name)+'/apply_profile',{method:'POST',body:JSON.stringify({profile:P.name,frame:$('#drwApplyFrame').checked})});toast('適用しました');$('#drwLoad').click()}catch(e){toast('エラー: '+e.message)}};
 $('#drwSaveProf').onclick=async()=>{if(!D)return;const n=prompt('新しいプロファイル名',D.name+'_profile');if(!n)return;try{await api('/api/drawing/'+encodeURIComponent(D.name)+'/save_as_profile',{method:'POST',body:JSON.stringify({profile:n})});toast('プロファイルを作成しました');await loadState();$('#profSel').value=n;await loadProfile(n)}catch(e){toast('エラー: '+e.message)}};
+// ---- line types (線種) ------------------------------------------------------------
+let LTD={},LTN={},LT={};
+const ltKind=k=>k[0]==='R'?'random':k[0]==='L'?'long':k==='09'?'aux':'normal';
+const hexToPat=(h,rnd)=>{const v=parseInt(h,16)>>>0;let s='';for(let i=0;i<32;i++){const b=(v>>>(31-i))&1;s+=rnd?(b?"'":","):(b?'-':' ')}return s};
+const patToHex=p=>{let v=0;for(let i=0;i<32;i++){if("-'".includes(p[i]||' '))v=(v|(1<<(31-i)))>>>0}return v.toString(16).padStart(8,'0')};
+function ltRuns(pat,unit){unit=Math.max(1,Math.min(32,unit|0));let c=[...pat.slice(0,unit)].map(ch=>ch==='-');
+ if(c.every(b=>b))return[[true,unit]];if(!c.some(b=>b))return[[false,unit]];
+ for(let p=1;p<=unit;p++){if(unit%p===0&&c.every((b,i)=>b===c[i%p])){c=c.slice(0,p);break}}
+ const n=c.length;let s=0;for(let i=0;i<n;i++){if(c[i]&&!c[(i-1+n)%n]){s=i;break}}
+ const r=c.slice(s).concat(c.slice(0,s));const out=[];for(const b of r){if(out.length&&out[out.length-1][0]===b)out[out.length-1][1]++;else out.push([b,1])}
+ let best=0;out.forEach((x,j)=>{const y=out[best];if(x[0]&&(!y[0]||x[1]>y[1]))best=j});return out.slice(best).concat(out.slice(0,best))}
+function ltPreview(k,lt,dpi,ps,zoom){const kind=ltKind(k),W=460,mm=W/zoom,dot=25.4/dpi*ps;let g='';
+ for(let i=0;i<=mm;i++){const x=i*zoom,h=i%10===0?10:i%5===0?7:4;g+=`<line x1="${x}" y1="36" x2="${x}" y2="${36-h}" stroke="#aab" stroke-width="1"/>`;if(i%10===0)g+=`<text x="${x+2}" y="47" font-size="9" fill="#889">${i}mm</text>`}
+ if(kind==='aux'){const r=ltRuns(hexToPat(lt.hex),lt.unit||4);let x=0;while(x<W){for(const [on,n] of r){const w=n*(lt.pitch||1)*2;if(on)g+=`<line x1="${x}" y1="14" x2="${Math.min(W,x+w)}" y2="14" stroke="#c0c" stroke-width="2"/>`;x+=w;if(x>=W)break}}
+  return [`<svg width="${W}" height="50">${g}</svg>`,'補助線種は画面表示だけで、印刷されません']}
+ if(kind==='random'){const pat=hexToPat(lt.hex,true),st=(lt.print_pitch||1)*dot,am=(lt.print_amp||1)*dot;let pts=[],x=0,y=0,i=0;
+  while(x<=W){pts.push(`${x.toFixed(1)},${(14-y*zoom).toFixed(1)}`);y+=pat[i%32]==="'"?am:-am;y=Math.max(-3,Math.min(3,y));x+=st*zoom;i++}
+  g+=`<polyline points="${pts.join(' ')}" fill="none" stroke="#111" stroke-width="1.2"/>`;
+  return [`<svg width="${W}" height="50">${g}</svg>`,`1 文字ごとに ${st.toFixed(3)} mm 進み、${am.toFixed(3)} mm 上下に振れる（形は目安）`]}
+ const r=ltRuns(hexToPat(lt.hex),lt.unit||32),pp=lt.print_pitch||10;let x=0;
+ while(x<W){for(const [on,n] of r){const len=n*pp*dot*zoom;if(on)g+=`<line x1="${x.toFixed(2)}" y1="14" x2="${Math.min(W,x+len).toFixed(2)}" y2="14" stroke="#111" stroke-width="2"/>`;x+=len;if(x>=W)break}}
+ const parts=r.map(([on,n])=>`${on?'線':'空き'} ${(n*pp*dot).toFixed(2)}`),cyc=r.reduce((a,x)=>a+x[1]*pp*dot,0);
+ return [`<svg width="${W}" height="50">${g}</svg>`,`${parts.join(' / ')} mm　（1 区切り ${cyc.toFixed(2)} mm）`]}
+function fillLinetypes(){LT={};for(const k of Object.keys(LTD)){LT[k]={...LTD[k],...((P&&P.linetypes||{})[k]||{})}}if(P&&P.print_dpi)$('#ltDpi').value=String(P.print_dpi);renderLinetypes()}
+function renderLinetypes(){const tb=$('#ltTable tbody');if(!tb)return;tb.innerHTML='';const dpi=+$('#ltDpi').value,ps=+$('#ltScale').value,zoom=+$('#ltZoom').value;$('#ltZoomV').textContent=`1 mm = ${zoom} px`;
+ for(const k of Object.keys(LT)){const lt=LT[k],kind=ltKind(k),rnd=kind==='random',pat=hexToPat(lt.hex,rnd);
+  const cells=[...pat].map((ch,i)=>`<span class="ltc ${"-'".includes(ch)?'on':''} ${(!rnd&&i<(lt.unit||32))?'u':''}" data-k="${k}" data-i="${i}" title="${i+1} 文字目"></span>`).join('');
+  let ctl;
+  if(rnd)ctl=`<td class="hint">—</td><td>振幅 <input type="number" min="1" max="16" data-lt="${k}.amp" value="${lt.amp}"><br>ピッチ <input type="number" min="1" max="16" data-lt="${k}.pitch" value="${lt.pitch}"></td><td>振幅 <input type="number" min="1" max="16" data-lt="${k}.print_amp" value="${lt.print_amp}"><br>ピッチ <input type="number" min="1" max="160" data-lt="${k}.print_pitch" value="${lt.print_pitch}"></td>`;
+  else ctl=`<td><select data-lt="${k}.unit">${[1,2,4,8,16,32].map(u=>`<option ${u==lt.unit?'selected':''}>${u}</option>`).join('')}</select></td><td><input type="number" min="1" max="16" data-lt="${k}.pitch" value="${lt.pitch}"></td><td>${kind==='aux'?'<span class="hint">印刷しない</span>':`<input type="number" min="1" max="160" data-lt="${k}.print_pitch" value="${lt.print_pitch}">`}</td>`;
+  const [svg,txt]=ltPreview(k,lt,dpi,ps,zoom);
+  tb.insertAdjacentHTML('beforeend',`<tr><td><b>${LTN[k]||k}</b></td><td><div class="ltcells">${cells}</div><code class="ltpat">${rnd?pat:pat.replace(/ /g,'·')}</code></td>${ctl}<td>${svg}<div class="hint">${txt}</div></td></tr>`)}
+ $$('.ltc').forEach(c=>c.onclick=()=>{const k=c.dataset.k,i=+c.dataset.i,rnd=ltKind(k)==='random';const p=[...hexToPat(LT[k].hex,rnd)];p[i]="-'".includes(p[i])?' ':'-';LT[k].hex=patToHex(p.join(''));renderLinetypes()});
+ $$('[data-lt]').forEach(inp=>inp.onchange=()=>{const [k,f]=inp.dataset.lt.split('.');LT[k][f]=parseInt(inp.value);renderLinetypes()})}
+['#ltDpi','#ltScale'].forEach(id=>$(id).onchange=renderLinetypes);$('#ltZoom').oninput=renderLinetypes;
+$('#ltReset').onclick=()=>{if(!confirm('線種を Jw_cad の初期値に戻しますか？（保存を押すまで確定しません）'))return;LT=JSON.parse(JSON.stringify(LTD));renderLinetypes()};
+$('#ltTest').onclick=async()=>{try{P=collect();await api('/api/profile/'+encodeURIComponent(P.name),{method:'PUT',body:JSON.stringify(P)});const r=await api('/api/profile/'+encodeURIComponent(P.name)+'/linetype_test',{method:'POST',body:JSON.stringify({dpi:+$('#ltDpi').value})});alert(`線種テスト用の図形を用意しました。\nJw_cad で 外部変形 → JWMCP_import.bat → 置く位置をクリック。\n印刷倍率 100% で印刷し、点線の 1 区切りを目盛と比べてください。\n（${r.outbox}）`)}catch(e){toast('エラー: '+e.message)}};
 loadState();
 </script></body></html>
 """

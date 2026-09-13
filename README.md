@@ -121,6 +121,16 @@ python -m jwmcp settings        # http://127.0.0.1:8765 が開く
 - 図面枠は専用レイヤグループ（既定 F）を 1/1 にして置く。DXF 出力とプレビューでは主縮尺に合わせて自動で拡大し、
   外部変形テキストではグループごとの実寸のまま出す（Jw_cad 側でグループ F を 1/1 にしておく）
 
+### 線種（点線・鎖線の見え方）
+`linetype_describe(profile?, dpi, print_scale)` `profile_set_linetypes(name, linetypes)` `linetype_test_sheet(profile?, dpi)`
+
+Jw_cad の線種は「－」と空白の 32 文字、1 パターンのドット数、画面ピッチ、印刷ピッチで決まり、印刷してみないと間隔が分かりにくい設定です。
+設定画面の「線種」タブでは、マス目のクリックでパターンを編集し、印刷したときの実寸（mm）の見本と、線と空きの長さを表示します。
+
+- 印刷長 = 文字数 × 印刷ピッチ × 25.4 / dpi mm。dpi は Jw_cad の「プリンタ dpi」（300 か 600）で、.jwf には保存されないため画面で選ぶ
+- 点線のピッチがどちらの dpi 基準で印刷されるかは Jw_cad のヘルプに明記がないので、`linetype_test_sheet` の図形を印刷倍率 100% で 1 回印刷し、実線の目盛と比べて確かめる（図形は `bz` で図寸読込するので、グループの縮尺に関係なく実寸で出る）
+- 変更した線種は `profile_export_jwf` で .jwf に書き出し、Jw_cad で読み込めば反映される
+
 ### 外部変形ブリッジ
 `gaihen_setup(exchange?, win_exchange?, wait)` `gaihen_status` `gaihen_jobs` `gaihen_read` `gaihen_preview`
 `gaihen_respond(job_id, entities | drawing, delete_selected?, notice?)` `gaihen_cancel` `gaihen_prepare_import` `jwc_temp_parse`

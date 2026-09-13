@@ -9,7 +9,7 @@ from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from . import __version__, bridge, jwc_temp, jww_read, profiles, scan
+from . import __version__, bridge, jwc_temp, jww_read, linetype, profiles, scan
 from .dxf_out import write_dxf
 from .jwf import parse_jwf
 from .jwf import summary as jwf_summary
@@ -253,6 +253,84 @@ def profile_set_logo(name: str, image: str, width_mm: float = 40, threshold: int
 @app.tool(description="Remove the logo from a profile's frame.")
 def profile_clear_logo(name: str) -> dict:
     return profiles.clear_logo(name)
+
+
+def _linetypes_of(profile: str | None) -> dict:
+    lts = dict(linetype.DEFAULTS)
+    if profile:
+        lts.update(profiles.load_profile(profile).get("linetypes") or {})
+    return lts
+
+
+@app.tool(description="Explain the line types (線種) of a profile, or Jw_cad's defaults: the 32-character pattern ('-' drawn, space "
+                      "skipped), each dash/gap length in printed mm and screen dots. dpi = printer dot basis (300 or 600); "
+                      "print_scale e.g. 0.5 when an A1 sheet is printed on A3.")
+def linetype_describe(profile: str | None = None, dpi: int = 600, print_scale: float = 1.0) -> dict:
+    try:
+        lts = _linetypes_of(profile)
+    except ModelError as exc:
+        return {"error": str(exc)}
+    return {"dpi": dpi, "dot_mm": round(25.4 / dpi, 4), "print_scale": print_scale,
+            "note": "印刷長 = 文字数 × 印刷ピッチ × 25.4/dpi mm。Jw_cad が点線ピッチに使う dpi の基準はヘルプに明記がないため、"
+                    "linetype_test_sheet を 1 回印刷して確認するのが確実",
+            "linetypes": [linetype.describe(k, lts[k], dpi, print_scale) for k in linetype.KEYS if k in lts]}
+
+
+@app.tool(description="Change line types in a profile. linetypes = {'05': {'pattern': '----------  --  ', 'unit': 16, 'pitch': 1, "
+                      "'print_pitch': 10}, 'R1': {'print_amp': 2}}. Keys 02-09, R1-R5 (random), L1-L4 (倍長). pattern uses '-' and "
+                      "spaces (or give hex). Values are checked against Jw_cad's ranges. Send to Jw_cad with profile_export_jwf.")
+def profile_set_linetypes(name: str, linetypes: dict[str, dict]) -> dict:
+    try:
+        prof = profiles.load_profile(name)
+    except ModelError as exc:
+        return {"error": str(exc)}
+    cur = {**linetype.DEFAULTS, **(prof.get("linetypes") or {})}
+    errors: dict[str, list[str]] = {}
+    for key, spec in (linetypes or {}).items():
+        k = str(key).zfill(2) if str(key).isdigit() else str(key).upper()
+        if k not in linetype.DEFAULTS:
+            errors[str(key)] = ["線種の指定は 02〜09、R1〜R5、L1〜L4 です"]
+            continue
+        lt = dict(cur[k])
+        if spec.get("pattern") is not None:
+            lt["hex"] = linetype.pattern_to_hex(str(spec["pattern"]))
+        if spec.get("hex"):
+            lt["hex"] = str(spec["hex"]).lower()
+        for f in ("unit", "pitch", "print_pitch", "amp", "print_amp"):
+            if spec.get(f) is not None:
+                lt[f] = int(spec[f])
+        errs = linetype.validate(k, lt)
+        if errs:
+            errors[str(key)] = errs
+        else:
+            cur[k] = lt
+    prof["linetypes"] = cur
+    profiles.save_profile(prof)
+    return {"profile": name, "errors": errors,
+            "linetypes": [linetype.describe(k, cur[k], prof.get("print_dpi", 600)) for k in linetype.KEYS],
+            "next": "Jw_cad に反映するには profile_export_jwf で .jwf を書き出し、Jw_cad の 設定 > 環境設定ファイル > 読込"}
+
+
+@app.tool(description="Make a printable line-type test sheet: 線種 2-8 as lines of length_mm with the computed dash/gap sizes and a "
+                      "mm ruler, in paper mm (read with bz) so it prints at true size at 印刷倍率 100%. to_jwcad=true puts it in "
+                      "outbox/IMPORT.txt for JWMCP_import.bat. Print it once and measure to confirm the dpi basis.")
+def linetype_test_sheet(profile: str | None = None, dpi: int = 600, length_mm: float = 100, to_jwcad: bool = True,
+                        exchange: str | None = None) -> dict:
+    try:
+        lts = _linetypes_of(profile)
+    except ModelError as exc:
+        return {"error": str(exc)}
+    d = Drawing(f"線種テスト_{profile or 'default'}", scale=1, paper="A4")
+    d.add(linetype.test_sheet_entities(lts, dpi, length_mm))
+    d.save()
+    out = {"drawing": d.name, "entities": len(d.entities), "dpi": dpi}
+    if to_jwcad:
+        text = jwc_temp.serialize(d.entities, scale_for=lambda e: 1.0, paper_coords=True,
+                                  notice="線種テスト: 印刷倍率100%で印刷し、目盛と比べてください")
+        out.update(bridge.prepare_import(Path(exchange) if exchange else None, text))
+    out["how_to"] = ("Jw_cad で 外部変形 > JWMCP_import.bat > 置く位置をクリック。印刷倍率 100% で印刷し、点線の 1 区切りを"
+                     "実線の目盛と比べる。書いてある mm と合えば dpi の基準はこの値で正しい")
+    return out
 
 
 @app.tool(description="Read a Jw_cad environment file (.jwf / jw_win.jwf): paper, pen colours, printer widths, 文字種 sizes, font, "

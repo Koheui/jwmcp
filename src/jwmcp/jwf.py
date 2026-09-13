@@ -61,6 +61,15 @@ def parse_jwf(path: str) -> dict:
             pens[9] = [int(v[0]), int(v[1]), int(v[2])]
     out["pen_colors"] = pens
 
+    # S_COMM_2 ②: 線描画の最大幅 (1..100, widths in dots) or line width unit 1/N mm (-1..-100)
+    wu = None
+    if "S_COMM_2" in raw:
+        t = _nums(raw["S_COMM_2"].split())
+        if len(t) >= 2:
+            wu = int(t[1])
+    out["line_width_unit"] = {"raw": wu, "mode": f"1/{abs(wu)}mm" if wu < 0 else "dots"} if wu is not None else None
+
+    # PCOLLOR_n = r g b <線幅 1-500> <実点半径 0.1-10.0>
     prints: dict[int, dict] = {}
     for n in range(1, 10):
         key = f"PCOLLOR_{n}"
@@ -69,9 +78,11 @@ def parse_jwf(path: str) -> dict:
             if len(v) >= 3:
                 d = {"rgb": [int(v[0]), int(v[1]), int(v[2])]}
                 if len(v) >= 4:
-                    d["width_index"] = int(v[3])
+                    d["width"] = int(v[3])
+                    if wu is not None and wu < 0:
+                        d["width_mm"] = round(v[3] / abs(wu), 4)
                 if len(v) >= 5:
-                    d["width_mm"] = v[4]
+                    d["point_radius"] = v[4]
                 prints[n] = d
     out["print_colors"] = prints
 
@@ -104,13 +115,12 @@ def parse_jwf(path: str) -> dict:
     out["group_names"] = group_names
     out["layer_names"] = layer_names
 
-    lts = {}
-    for n in range(2, 10):
-        key = f"LTYPE_{n:02d}"
-        if key in raw:
-            toks = raw[key].split()
-            lts[n] = {"pattern_hex": toks[0], "params": _nums(toks[1:])}
-    out["linetypes"] = lts
+    from .linetype import from_jwf_raw
+    out["linetypes"] = from_jwf_raw(raw)
+    if "P_dpi" in raw:              # printer dpi basis; Jw_cad reads it but never writes it to the .jwf
+        pd = _nums(raw["P_dpi"].split())
+        if pd:
+            out["print_dpi"] = int(pd[0])
     return out
 
 
@@ -151,7 +161,14 @@ def write_jwf(profile: dict, out: str, base_jwf: str | None = None) -> dict:
     for n, d in (profile.get("print_colors") or {}).items():
         if 1 <= int(n) <= 8 and d.get("rgb"):
             r, g, b = d["rgb"]
-            new[f"PCOLLOR_{int(n)}"] = f"{int(r):3d}  {int(g):3d}  {int(b):3d}    {int(d.get('width_index', 1))}    {float(d.get('width_mm', 0.3)):.2f}"
+            width = int(d.get("width", d.get("width_index", 1)))
+            # older profiles stored the point radius under "width_mm" next to "width_index"
+            radius = float(d.get("point_radius", d.get("width_mm", 0.3) if "width" not in d else 0.3))
+            new[f"PCOLLOR_{int(n)}"] = f"{int(r):3d}  {int(g):3d}  {int(b):3d}  {width:4d}  {radius:.2f}"
+    from .linetype import DEFAULTS as _LT_DEFAULTS, to_jwf_value
+    for key, lt in (profile.get("linetypes") or {}).items():
+        if key in _LT_DEFAULTS and lt.get("hex"):
+            new[f"LTYPE_{key}"] = to_jwf_value(key, lt)
     tt = profile.get("text_types") or {}
     if len(tt) >= 10:
         rows = [tt[str(n)] if str(n) in tt else tt.get(n, {}) for n in range(1, 11)]
